@@ -20,8 +20,8 @@ quant:
   calibration_ref: embedded   # the w8a16 ONNX carries its own QDQ encodings
   algorithm: qdq
 host:
-  pre: cv_classifier:preprocess     # image -> [1,3,224,224] in [0,1]
-  post: cv_classifier:logits
+  pre: cv:preprocess     # image -> [1,3,224,224] in [0,1]
+  post: cv:logits
   deps: [onnxruntime, numpy, pillow]
 graphs:
   - id: classifier

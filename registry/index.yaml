@@ -202,7 +202,7 @@ models:
         ext: dlc
         local: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-v2/mobilenet_w8a16.dlc
         run:
-          modality: cv_classifier
+          modality: cv
           board_name: mobilenet
           meta: ""
           cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-v2/mobilenet_v2.onnx
@@ -215,3 +215,34 @@ models:
           vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.956,
                          note: "real image (ImageNet 'Samoyed'); random-noise input gives 0.776 and the gate correctly FAILs it"}
           latency_ms: {note: "single 224x224 image; DLC compiled to context on-board"}
+
+  # --- CV super-resolution (image -> image), w8a8 — a 2nd CV task + a 2nd quant profile -----------
+  # QuickSRNet-Small from Hugging Face (Qualcomm export), converted to a w8a8 DLC. Shows the framework
+  # is not classifier-only and that quant is a real axis (w8a8 here, w8a16 elsewhere).
+  - model: quicksrnet-small
+    source: qualcomm/QuickSRNetSmall
+    license: bsd-3-clause
+    modality: cv-superres
+    version: 1.0.0
+    variants:
+      - arch: v68
+        quant: w8a8
+        shape: img128
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: dlc
+        local: /Users/nameissakthi/Desktop/personal/chipwright-models/quicksrnet-small/quicksrnet_w8a8.dlc
+        run:
+          modality: cv
+          board_name: quicksrnet
+          meta: ""
+          cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/quicksrnet-small/quicksrnetsmall.onnx
+          input: /Users/nameissakthi/Desktop/personal/chipwright-models/quicksrnet-small/input.npy
+          threshold: 0.90
+        verified:
+          "on": "QCS6490 (soc_id 498)"
+          date: 2026-10-09
+          loads: true
+          vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.9999,
+                         note: "4x super-resolution; w8a8 upscaled image is near-lossless vs float"}
+          latency_ms: {note: "128x128 -> 512x512; DLC compiled to context on-board"}

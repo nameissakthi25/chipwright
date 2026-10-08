@@ -134,6 +134,43 @@ def cmd_run(args):
     return 0 if rep["pass"] else 1
 
 
+def cmd_list(args):
+    reg = Registry(args.registry)
+    # a target is optional — list works offline, and resolves per-model when one is available
+    target = None
+    b = _board_from(args)
+    if b["host"] and b["pw"]:
+        t = probe(b["host"], b["user"], b["pw"], b["port"])
+        if t.reachable:
+            target = t
+    if target is None and args.target:
+        target = TargetKey.manual(args.target)
+
+    head = f"{target}" if target else "no target — pass --target or configure a board to resolve"
+    print(f"{DIM}catalogue · {len(reg.models())} models · {head}{RST}")
+    badge = {Outcome.USE: f"{GREEN}USE{RST}", Outcome.USE_WITH_WARN: f"{YELLOW}USE*{RST}",
+             Outcome.BUILD: f"{YELLOW}BUILD{RST}", Outcome.FAIL: f"{RED}FAIL{RST}"}
+    for m in reg.models():
+        vs = reg.variants(m)
+        archs = ",".join(sorted({v.arch for v in vs}))
+        quants = ",".join(sorted({v.quant for v in vs}))
+        out = ""
+        if target:
+            d = resolve(target, vs)
+            out = badge.get(d.outcome, "")
+            if d.outcome == Outcome.FAIL and d.axis:
+                out += f"{DIM}({d.axis}){RST}"
+        rec = next((v.verified for v in vs if v.verified), None)
+        vr = ""
+        if rec and isinstance(rec.get("vs_reference"), dict):
+            val = rec["vs_reference"].get("value")
+            met = rec["vs_reference"].get("metric", "")
+            if val is not None:
+                vr = f"{DIM}{met}={val}{RST}"
+        print(f"  {m:20s} {archs:9s} {quants:9s} {out:16s} {vr}")
+    return 0
+
+
 def cmd_build(args):
     import os
     reg = Registry(args.registry)
@@ -192,11 +229,13 @@ def main(argv=None):
     ap.add_argument("--shape", help="narrow to a shape profile, e.g. win30s")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor", help="probe the board")
+    sub.add_parser("list", help="browse the catalogue (with resolve outcome for your board)")
     rp = sub.add_parser("resolve", help="resolve a model against the board"); rp.add_argument("model")
     rnp = sub.add_parser("run", help="resolve, fetch, run on the board, verify vs CPU"); rnp.add_argument("model"); rnp.add_argument("--input")
     bp = sub.add_parser("build", help="resolve; when it misses, build from a recipe"); bp.add_argument("model")
     args = ap.parse_args(argv)
-    return {"doctor": cmd_doctor, "resolve": cmd_resolve, "run": cmd_run, "build": cmd_build}[args.cmd](args)
+    return {"doctor": cmd_doctor, "list": cmd_list, "resolve": cmd_resolve,
+            "run": cmd_run, "build": cmd_build}[args.cmd](args)
 
 
 if __name__ == "__main__":
