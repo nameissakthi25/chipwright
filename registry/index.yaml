@@ -246,3 +246,34 @@ models:
           vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.9999,
                          note: "4x super-resolution; w8a8 upscaled image is near-lossless vs float"}
           latency_ms: {note: "128x128 -> 512x512; DLC compiled to context on-board"}
+
+  # --- CV semantic segmentation (image -> per-pixel class mask), w8a8 -----------------------------
+  # FCN-ResNet50 from Hugging Face (Qualcomm export), conv-based (ResNet backbone) so it converts
+  # clean. A third CV task through the same generic 'cv' runner.
+  - model: fcn-resnet50
+    source: qualcomm/FCN-ResNet50
+    license: bsd-3-clause
+    modality: cv-segmentation
+    version: 1.0.0
+    variants:
+      - arch: v68
+        quant: w8a8
+        shape: img520
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: dlc
+        local: /Users/nameissakthi/Desktop/personal/chipwright-models/fcn-resnet50/fcn_w8a8.dlc
+        run:
+          modality: cv
+          board_name: fcn
+          meta: ""
+          cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/fcn-resnet50/fcn_resnet50.onnx
+          input: /Users/nameissakthi/Desktop/personal/chipwright-models/fcn-resnet50/input.npy
+          threshold: 0.90
+        verified:
+          "on": "QCS6490 (soc_id 498)"
+          date: 2026-10-09
+          loads: true
+          vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.998,
+                         note: "per-pixel semantic mask; w8a8 near-lossless vs float"}
+          latency_ms: {note: "520x520; DLC compiled to context on-board (spills to DDR)"}
