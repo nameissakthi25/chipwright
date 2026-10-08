@@ -172,11 +172,16 @@ registry/
 ## Status
 
 - ✅ **resolve** — done, with the four honest outcomes, offline targets, and axis-named failures.
-- ✅ **run** — done and **verified on hardware**, three real models pulled from Hugging Face, on a live QCS6490 / RB3 Gen2:
-  - `chipwright run zipformer-enin` (ASR, w8a16) → encoder NPU-vs-CPU **cosine 0.988**.
-  - `chipwright run mobilenet-v2` (CV classification, w8a16 — DLC compiled to a context binary on the board) → **cosine 0.956** on a real image. On random-noise input the same gate correctly **FAILs** at 0.776 — the point of verifying, not just loading.
-  - `chipwright run quicksrnet-small` (CV super-resolution, **w8a8**) → **cosine 0.9999**.
-  - Two modalities, two CV tasks, two quantization profiles — the quant axis is real, and every run ends in a measured number.
+- ✅ **run** — done and **verified on hardware**, four real models pulled from Hugging Face, on a live QCS6490 / RB3 Gen2:
+
+  | model | task | quant | cosine |
+  |---|---|---|---|
+  | `zipformer-enin` | ASR (streaming RNN-T) | w8a16 | **0.988** |
+  | `mobilenet-v2` | image classification | w8a16 | **0.956** |
+  | `quicksrnet-small` | super-resolution | w8a8 | **0.9999** |
+  | `fcn-resnet50` | semantic segmentation | w8a8 | **0.998** |
+
+  Two modalities, three CV tasks, two quant profiles — the quant axis is real, and every run ends in a measured number. The gate earns its keep: a random-noise input to MobileNet correctly **FAILs** at 0.776, and a MediaPipe face detector surfaced a genuine w8a8 fidelity loss on its secondary score head (0.80 vs 0.98 elsewhere) — caught, not shipped. A Depth-Anything ViT was **refused at convert** (an unsupported reshape attribute) rather than built into garbage — the honest boundary, handled by a recipe adaptation.
 - ✅ **build** — implemented: op pre-check, host preflight, `convert → quantize → on-board context`, and a fidelity gate before publish. (A real build needs an x86_64-linux host with QAIRT installed; the CLI says so when it isn't there.)
 
 **SDK-range in practice:** that same board runs QAIRT **2.38.0** while the artifact was tested at **2.37.1**, both inside the compatible range `>=2.34,<2.40`. It ran correctly — and `resolve` says so plainly (USE-with-warning), rather than pretending the tested point and the board agree.
