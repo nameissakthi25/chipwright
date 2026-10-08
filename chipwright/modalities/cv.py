@@ -24,12 +24,11 @@ def run(device, ctx_board_path, meta, cpu_onnx, input_npy):
 
     sess = ort.InferenceSession(cpu_onnx, providers=["CPUExecutionProvider"])
     in_name = sess.get_inputs()[0].name
-    out_name = sess.get_outputs()[0].name
-    cpu_y = sess.run(None, {in_name: x})[0]
-    cpu_out = {out_name: cpu_y}
+    out_names = [o.name for o in sess.get_outputs()]
+    cpu_vals = sess.run(None, {in_name: x})
+    cpu_out = {n: v for n, v in zip(out_names, cpu_vals)}
 
-    npu = device.run(ctx_board_path, {in_name: x},
-                     [{"name": out_name, "dtype": "float32", "shape": tuple(cpu_y.shape)}],
-                     native_io=False)
-    npu_out = {out_name: npu[out_name].reshape(cpu_y.shape)}
+    specs = [{"name": n, "dtype": "float32", "shape": tuple(cpu_out[n].shape)} for n in out_names]
+    npu = device.run(ctx_board_path, {in_name: x}, specs, native_io=False)
+    npu_out = {n: npu[n].reshape(cpu_out[n].shape) for n in out_names}
     return npu_out, cpu_out
