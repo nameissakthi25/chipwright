@@ -1,0 +1,88 @@
+# Chipwright registry — the index is a single reviewable file; artifacts live by hash in object storage.
+# The registry's unit is a BUILD VARIANT, not a model: one model version fans out to many artifacts,
+# one per (arch × quant × shape × SDK-range). "verified:" is a record, not a badge — the evidence of
+# the run that validated the variant, so a reader who distrusts the claim can check the inputs.
+registry_schema: 1
+
+models:
+  # --- USE path: a hosted, verified artifact for v68 -------------------------------------------
+  - model: laya-decision
+    source: convaiinnovations/laya
+    license: apache-2.0
+    modality: typed-decision
+    version: 1.0.0
+    variants:
+      - arch: v68
+        quant: w8a16
+        shape: win256
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: qnnctx
+        url: https://huggingface.co/nameissakthi/laya-qcs6490-encoder/resolve/main/ctx/laya_encoder_256_sqnr_ctx.bin
+        sha256: b338a4067e9d9d3147aa8e016892450e51018de6db425ef2e3a4e533a4548a54
+        verified:
+          "on": QCS6490
+          loads: true
+          vs_reference: {backend: onnxruntime-cpu, metric: hidden_state_pearson, value: 0.88}
+          latency_ms: {p50: 84}
+
+  # --- BUILD path: milestone-1 target, recipe-only (no hosted artifact yet) --------------------
+  - model: whisper-small-en
+    source: openai/whisper-small.en
+    license: mit
+    modality: asr
+    version: 1.2.0
+    variants:
+      - arch: v68
+        quant: w8a16
+        shape: win30s
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: qnnctx
+        recipe: recipes/whisper-small-en/1.2.0.yaml   # resolver offers to build; milestone-1 stops here
+
+  # --- BUILD path, but carrying a real on-device verification record (today's Jero STT) --------
+  - model: zipformer-enin
+    source: nameissakthi/zipformer-enin-qairt-aimet
+    license: apache-2.0
+    modality: asr
+    version: 7.0.0
+    variants:
+      - arch: v68
+        quant: w8a16
+        shape: win39          # 39-frame streaming window
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: qnnctx
+        # a built artifact on disk (not yet hosted) + how `run` executes and verifies it
+        local: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/models/encoder_w8a16_ctx.bin.bin
+        run:
+          modality: asr_encoder
+          board_name: zipformer_encoder_w8a16_ctx.bin
+          meta: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/models/encoder_meta.json
+          cpu_onnx: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/onnx_test/model/encoder.onnx
+          input: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/evaluation/utterances/sv00000.npy
+          threshold: 0.95
+        recipe: recipes/zipformer-enin/7.0.0.yaml
+        verified:
+          "on": "QCS6490 (soc_id 498)"
+          date: 2026-10-08
+          loads: true
+          vs_reference: {backend: onnxruntime-cpu-float, metric: wer_delta,
+                         htp_wer: 0.270, cpu_float_wer: 0.287, note: "w8a16 ~lossless vs float"}
+          latency_ms: {note: "enc ~16.4 ms/chunk, RTF ~0.05 persistent-context"}
+
+  # --- FAIL path: only a v73 variant exists; a v68 board gets an honest axis-named refusal ------
+  - model: qwen2.5-1.5b-instruct
+    source: Qwen/Qwen2.5-1.5B-Instruct
+    license: apache-2.0
+    modality: llm
+    version: 1.0.0
+    variants:
+      - arch: v73
+        quant: w4a16
+        shape: ctx4096
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: qnnctx
+        recipe: recipes/qwen2.5-1.5b/1.0.0.yaml

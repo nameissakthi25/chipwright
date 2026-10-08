@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chipwright"
+version = "0.1.0"
+description = "Chipwright — a package manager and model hub for Qualcomm NPUs (resolve · run · build)"
+requires-python = ">=3.9"
+dependencies = ["pyyaml>=6", "numpy>=1.24"]
+
+[project.optional-dependencies]
+asr = []   # qcf-asr: audio frontend + decoders (next milestone)
+tts = []
+llm = []
+
+[project.scripts]
+chipwright = "chipwright.cli:main"
+
+[tool.setuptools]
+packages = ["chipwright", "chipwright.modalities", "chipwright.tests", "runtime", "runtime.devices"]

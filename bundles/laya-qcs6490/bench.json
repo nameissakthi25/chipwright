@@ -1,0 +1,27 @@
+{
+  "bundle": "laya-qcs6490",
+  "verified_on": "physical-qcs6490 (Hexagon V68, w8a16)",
+  "latency": { "ms_per_decision": 84, "npu_encoder_ms": 73, "host_head_ms": 11, "power_w": 6, "energy_j": 0.5 },
+  "fidelity_vs_float": {
+    "method": "direct hidden-state comparison, NPU vs CPU-float, same inputs (fid256, 60 emails / 120 markers)",
+    "marker_hidden_pearson": 0.818,
+    "all_token_hidden_pearson": 0.884,
+    "per_email_pearson_min": 0.798,
+    "note_128_near_lossless": "at 128 tokens: NPU<->float r 0.87, 100% decision agreement"
+  },
+  "marker_collapse_fix": {
+    "min_max_separation": 0.00, "sqnr_separation_board": 23.37,
+    "explanation": "min-max quantizes the two RoPE-adjacent markers identically (collapse); sqnr preserves the separation"
+  },
+  "phishing_caveat": {
+    "dataset": "PhishNChips core, N=2000",
+    "float_auroc": 0.690, "npu_sqnr_auroc": 0.804, "length_alone_auroc": 0.759,
+    "note": "length-confounded; NOT a clean capability/fidelity metric. Judge fidelity on hidden states above."
+  },
+  "vs_baseline": { "tesla_t4_ms_per_decision": 39.5, "tesla_t4_power_w": 70, "laya_published_base_auroc": 0.678 },
+  "live_sanity_check": {
+    "ran_on": "physical-qcs6490 via runtime.run (end-to-end bundle)",
+    "phishing_example": { "text": "URGENT: account locked, verify at http://bit.ly/secure-login-verify", "noul": 1.0 },
+    "benign_example": { "text": "Hi team, attaching sprint notes, sync at 10am", "noul": 0.0001 }
+  }
+}
