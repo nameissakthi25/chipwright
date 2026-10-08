@@ -5,14 +5,33 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "chipwright"
 version = "0.1.0"
-description = "Chipwright — a package manager and model hub for Qualcomm NPUs (resolve · run · build)"
+description = "A verified package manager for Qualcomm NPUs — resolve the artifact that loads on your exact chip, run it, and prove it against a CPU reference."
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.9"
+keywords = ["npu", "qualcomm", "hexagon", "qnn", "edge-ai", "quantization", "inference", "package-manager"]
 dependencies = ["pyyaml>=6", "numpy>=1.24"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Build Tools",
+]
 
 [project.optional-dependencies]
-asr = []   # qcf-asr: audio frontend + decoders (next milestone)
-tts = []
+# Per-modality runners (frontend + decoders / reference). Installed by extra.
+asr = ["onnxruntime>=1.16"]   # streaming encoder/decoder/joiner
+cv  = ["onnxruntime>=1.16", "pillow>=10"]   # image classifiers
+tts = ["onnxruntime>=1.16"]
 llm = []
+build = ["onnx>=1.14"]        # op pre-check for the build verb
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/nameissakthi25/chipwright"
+Specification = "https://github.com/nameissakthi25/chipwright-speckit"
 
 [project.scripts]
 chipwright = "chipwright.cli:main"

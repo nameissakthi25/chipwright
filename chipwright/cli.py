@@ -134,6 +134,55 @@ def cmd_run(args):
     return 0 if rep["pass"] else 1
 
 
+def cmd_build(args):
+    import os
+    reg = Registry(args.registry)
+    if args.model not in reg.models():
+        print(f"{RED}unknown model{RST} '{args.model}'. known: {', '.join(reg.models())}")
+        return 2
+    target = _get_target(args)
+    d = resolve(target, reg.variants(args.model), args.quant, args.shape)
+    _print_decision(args.model, target, d)
+    if d.ok:
+        print(f"{DIM}already resolves to USE — nothing to build.{RST}")
+        return 0
+    if d.outcome != Outcome.BUILD:
+        return 1
+    v = d.variant
+    from . import config, build as builder, errors, recipe as recipe_mod
+
+    env = config.read_env()
+    pf = config.host_preflight(env)
+    if pf.ok:
+        print(f"{GREEN}✔ build host ready{RST}")
+    else:
+        print(f"{YELLOW}▲ build host not ready{RST} — missing: {', '.join(pf.missing) or 'unknown'}")
+
+    # recipes are repo-relative (sibling of registry/)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rp = v.recipe if os.path.isabs(v.recipe) else os.path.join(repo_root, v.recipe)
+    if not os.path.exists(rp):
+        print(f"{YELLOW}recipe not found{RST} at {v.recipe} — author it against the spec kit's Recipe "
+              f"schema, then re-run. (Build needs an x86_64-linux host with QAIRT installed.)")
+        return 1
+    try:
+        rec = recipe_mod.load(rp)
+        res = builder.build(rec, env)
+    except errors.BuildError as e:
+        axis = getattr(e, "axis", None)
+        print(f"{RED}build stopped{RST}: {e}" + (f"  (axis={axis})" if axis else ""))
+        return 1
+    except Exception as e:
+        print(f"{RED}build failed{RST}: {e}")
+        return 1
+    if res.ok:
+        print(f"{GREEN}✔ built{RST}  {res.artifact_path}  tag={res.tag}")
+        print(f"{DIM}verify it on the board (chipwright run) before publishing.{RST}")
+        return 0
+    print(f"{RED}✗ build failed on axis {res.failed_axis}{RST}")
+    return 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="chipwright", description="Chipwright — package manager for Qualcomm NPUs")
     ap.add_argument("--registry", default=None, help="index path/URL (default: bundled registry)")
@@ -144,9 +193,10 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor", help="probe the board")
     rp = sub.add_parser("resolve", help="resolve a model against the board"); rp.add_argument("model")
-    rnp = sub.add_parser("run", help="resolve, fetch, (run)"); rnp.add_argument("model"); rnp.add_argument("--input")
+    rnp = sub.add_parser("run", help="resolve, fetch, run on the board, verify vs CPU"); rnp.add_argument("model"); rnp.add_argument("--input")
+    bp = sub.add_parser("build", help="resolve; when it misses, build from a recipe"); bp.add_argument("model")
     args = ap.parse_args(argv)
-    return {"doctor": cmd_doctor, "resolve": cmd_resolve, "run": cmd_run}[args.cmd](args)
+    return {"doctor": cmd_doctor, "resolve": cmd_resolve, "run": cmd_run, "build": cmd_build}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Registry client — read the index (a git-repo file, cached) and list a model's variants.
 
-Per the brief: start the registry as a git repository, not a service. The index is a single YAML
+Start the registry as a git repository, not a service. The index is a single YAML
 file the client reads; artifacts live in object storage addressed by hash. No server to run, and the
 whole index is reviewable in pull requests — which is what makes a verification record trustworthy.
 """

@@ -1,6 +1,6 @@
-"""qcf-core — the resolver, registry client, artifact cache, and device transport that the CLI,
+"""chipwright-core — the resolver, registry client, artifact cache, and device transport that the CLI,
 the desktop app, and a Claude Code session all share, so they always agree about what will run on
-your board. See the Qualcomm AI Model Framework design brief.
+your board.
 """
 from .env import TargetKey, probe
 from .registry import Registry

@@ -52,9 +52,32 @@ class RemoteQNN:
         return last
 
     def ensure_ctx(self, local_path, name):
-        """Push the context binary to the board once; return its board path."""
-        board_path = f"{self.board_dir}/{name}"
+        """Push an artifact to the board and return a runnable context-binary path (cached).
+
+        A DLC is the durable artifact; the HTP context binary is per-target, so a `.dlc` is compiled
+        into a context binary ON the board (2 MB VTCM) — regenerate, don't ship brittle. A prebuilt
+        context binary (`.bin`/`.qnnctx`) is pushed as-is.
+        """
         self._retry(lambda: _ssh(self.pw, self.port, self.dest, f"mkdir -p {self.board_dir}", timeout=40))
+        if local_path.endswith(".dlc"):
+            dlc_board = f"{self.board_dir}/{name}"
+            ctx_board = f"{self.board_dir}/ctx_{name}/{name}_ctx.bin"
+            present = _ssh(self.pw, self.port, self.dest, f"test -f {ctx_board} && echo OK", timeout=40)
+            if "OK" not in (present.stdout or ""):
+                r = self._retry(lambda: _scp(self.pw, self.port, local_path, f"{self.dest}:{dlc_board}"))
+                if getattr(r, "returncode", 1) != 0:
+                    raise RuntimeError(f"failed to push DLC: {getattr(r,'stderr','')}")
+                env = "export ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp:/usr/lib LD_LIBRARY_PATH=/usr/lib"
+                gen = (f"cd {self.board_dir} && {env} && rm -rf ctx_{name} && "
+                       f"qnn-context-binary-generator --backend {self.backend} "
+                       f"--model /usr/lib/libQnnModelDlc.so --dlc_path {name} "
+                       f"--binary_file {name}_ctx --output_dir ctx_{name}")
+                g = self._retry(lambda: _ssh(self.pw, self.port, self.dest, gen, timeout=1200))
+                check = _ssh(self.pw, self.port, self.dest, f"test -f {ctx_board} && echo OK", timeout=40)
+                if "OK" not in (check.stdout or ""):
+                    raise RuntimeError("on-board context-gen failed:\n" + (getattr(g, "stdout", "") or "")[-500:])
+            return ctx_board
+        board_path = f"{self.board_dir}/{name}"
         present = _ssh(self.pw, self.port, self.dest, f"test -f {board_path} && echo OK", timeout=40)
         if "OK" not in (present.stdout or ""):
             r = self._retry(lambda: _scp(self.pw, self.port, local_path, f"{self.dest}:{board_path}"))
@@ -62,9 +85,13 @@ class RemoteQNN:
                 raise RuntimeError(f"failed to push context binary: {getattr(r,'stderr','')}")
         return board_path
 
-    def run(self, ctx_board_path, feeds_native, outputs):
-        """feeds_native: {name: ndarray in the graph's native dtype}. outputs: [{name,dtype,shape}].
-        Returns {name: ndarray[shape]} in native dtype (modality dequantizes)."""
+    def run(self, ctx_board_path, feeds_native, outputs, native_io=True):
+        """feeds_native: {name: ndarray}. outputs: [{name,dtype,shape}]. Returns {name: ndarray[shape]}.
+
+        native_io=True: raws are the graph's native quantized dtype (the modality quantizes/dequantizes).
+        native_io=False: feed float32, let qnn-net-run quantize the input and dequantize the output —
+        the simple path for graphs with float I/O semantics (e.g. an image classifier).
+        """
         dt = {"uint16": np.uint16, "int32": np.int32, "float32": np.float32}
         with tempfile.TemporaryDirectory() as td:
             parts = []
@@ -79,9 +106,9 @@ class RemoteQNN:
             if getattr(r, "returncode", 1) != 0:
                 raise RuntimeError("failed to push inputs")
             env = "export ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp:/usr/lib LD_LIBRARY_PATH=/usr/lib"
+            flags = " --use_native_input_files --use_native_output_files" if native_io else ""
             cmd = (f"cd {rdir} && {env} && qnn-net-run --backend {self.backend} "
-                   f"--retrieve_context {ctx_board_path} --input_list il.txt --output_dir out "
-                   f"--use_native_input_files --use_native_output_files")
+                   f"--retrieve_context {ctx_board_path} --input_list il.txt --output_dir out" + flags)
             run = self._retry(lambda: _ssh(self.pw, self.port, self.dest, cmd, timeout=600))
             if getattr(run, "returncode", 1) != 0:
                 _ssh(self.pw, self.port, self.dest, f"rm -rf {rdir}", timeout=30)

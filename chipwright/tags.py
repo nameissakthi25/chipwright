@@ -1,4 +1,4 @@
-"""Artifact tags — the wheel-tag grammar for QNN artifacts (design brief §"The hard problem").
+"""Artifact tags — the wheel-tag grammar for QNN artifacts.
 
 A QNN context binary is valid for exactly one combination of five axes. We name that combination
 in the filename (the parts a resolver matches on) and expand the rest in the manifest, the same way

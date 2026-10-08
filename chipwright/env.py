@@ -1,9 +1,9 @@
 """Board probe → TargetKey. The thing the resolver matches artifacts against.
 
 On Qualcomm silicon the question that decides everything is *which chip* — specifically the Hexagon
-architecture, the installed QAIRT version, and the SoC. `qcf doctor` reads those off the board (over
+architecture, the installed QAIRT version, and the SoC. `chipwright doctor` reads those off the board (over
 SSH/ADB) rather than guessing. This mirrors the `qualcomm-env-discovery` skill's `probe-env.sh`, kept
-self-contained here so qcf-core has no hard dependency on a skill checkout.
+self-contained here so chipwright-core has no hard dependency on a skill checkout.
 
 Offline (no board reachable) is a first-class state, not an error: resolution can still run against a
 TargetKey the user names by hand (`--target htpv68,qnn2.37`).

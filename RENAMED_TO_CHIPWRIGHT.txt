@@ -1,1 +1,0 @@
-renamed: Kiln -> QCForge -> Assay -> Chipwright (CLI: chipwright). A maker/'wright' for your chip; verified package manager for edge NPUs.

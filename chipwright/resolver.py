@@ -1,6 +1,6 @@
 """Resolver — match registry variants against a board's TargetKey, with an explicit miss path.
 
-The brief's resolution rules, in order (design brief §"Resolution rules"):
+The resolution rules, in order:
 
   1. Exact match on arch, quant, shape; SDK inside the compatible range  -> USE
   2. Match, but SDK outside the tested point (still in range)            -> USE_WITH_WARN

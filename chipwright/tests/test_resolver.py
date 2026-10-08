@@ -80,9 +80,10 @@ def test_seed_registry_loads():
     reg = Registry()
     assert "laya-decision" in reg.models() and "whisper-small-en" in reg.models()
     v68 = TargetKey(htp_arch="v68", qairt="2.37.1")
-    assert resolve(v68, reg.variants("laya-decision")).outcome is Outcome.USE
+    assert resolve(v68, reg.variants("laya-decision")).ok               # USE (exact or SDK-warn)
     assert resolve(v68, reg.variants("whisper-small-en")).outcome is Outcome.BUILD
-    assert resolve(v68, reg.variants("qwen2.5-1.5b-instruct")).axis == "htp_arch"
+    assert resolve(v68, reg.variants("qwen2.5-1.5b-instruct")).outcome is Outcome.BUILD  # v68 variant exists
+    assert resolve(v68, reg.variants("qwen2.5-7b-instruct")).axis == "htp_arch"          # v73/v75 only
 
 
 if __name__ == "__main__":
