@@ -172,9 +172,11 @@ registry/
 ## Status
 
 - ✅ **resolve** — done, with the four honest outcomes, offline targets, and axis-named failures.
-- ✅ **run** — done and **verified on hardware, across two modalities**, on a live QCS6490 / RB3 Gen2:
-  - `chipwright run zipformer-enin` (ASR) → encoder NPU-vs-CPU **cosine 0.988**.
-  - `chipwright run mobilenet-v2` (CV, pulled from Hugging Face, w8a16 DLC compiled to a context binary on the board) → **cosine 0.956** on a real image. On a random-noise input the same gate correctly **FAILs** at 0.776 — the point of verifying, not just loading.
+- ✅ **run** — done and **verified on hardware**, three real models pulled from Hugging Face, on a live QCS6490 / RB3 Gen2:
+  - `chipwright run zipformer-enin` (ASR, w8a16) → encoder NPU-vs-CPU **cosine 0.988**.
+  - `chipwright run mobilenet-v2` (CV classification, w8a16 — DLC compiled to a context binary on the board) → **cosine 0.956** on a real image. On random-noise input the same gate correctly **FAILs** at 0.776 — the point of verifying, not just loading.
+  - `chipwright run quicksrnet-small` (CV super-resolution, **w8a8**) → **cosine 0.9999**.
+  - Two modalities, two CV tasks, two quantization profiles — the quant axis is real, and every run ends in a measured number.
 - ✅ **build** — implemented: op pre-check, host preflight, `convert → quantize → on-board context`, and a fidelity gate before publish. (A real build needs an x86_64-linux host with QAIRT installed; the CLI says so when it isn't there.)
 
 **SDK-range in practice:** that same board runs QAIRT **2.38.0** while the artifact was tested at **2.37.1**, both inside the compatible range `>=2.34,<2.40`. It ran correctly — and `resolve` says so plainly (USE-with-warning), rather than pretending the tested point and the board agree.

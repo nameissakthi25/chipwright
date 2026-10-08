@@ -90,3 +90,17 @@ Notes:
   per-channel weights + CLE.
 - `qwen2.5-1.5b-instruct` on v68 needs all-integer w4a16 (the fp16 context-gen path fails); the
   build is the slow part. It carries no task metric on purpose.
+
+## Live-verified on hardware (QCS6490 / v68, 2026-10-09)
+
+Pulled from Hugging Face and run through the whole framework (`chipwright run`) — resolve → DLC →
+on-board context → NPU vs CPU-float reference cosine:
+
+| model | modality | quant | cosine (NPU vs CPU) |
+|---|---|---|---|
+| `zipformer-enin` | ASR (streaming RNN-T) | w8a16 | **0.988** |
+| `mobilenet-v2` | CV classification | w8a16 | **0.956** (real image; random-noise input correctly FAILs at 0.776) |
+| `quicksrnet-small` | CV super-resolution | w8a8 | **0.9999** |
+
+Plus on-device records from our own builds: `laya-intent` (ModernBERT, QAT w8a16 → 100% top-1),
+`supertonic-tts` (flow-matching TTS, log-mel 0.77). The quant axis is real (w8a16 and w8a8 both shown).
