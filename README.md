@@ -182,7 +182,7 @@ registry/
   | `fcn-resnet50` | semantic segmentation | w8a8 | **0.998** |
 
   Two modalities, three CV tasks, two quant profiles — the quant axis is real, and every run ends in a measured number. The gate earns its keep: a random-noise input to MobileNet correctly **FAILs** at 0.776, and a MediaPipe face detector surfaced a genuine w8a8 fidelity loss on its secondary score head (0.80 vs 0.98 elsewhere) — caught, not shipped. A Depth-Anything ViT was **refused at convert** (an unsupported reshape attribute) rather than built into garbage — the honest boundary, handled by a recipe adaptation.
-- ✅ **build** — implemented: op pre-check, host preflight, `convert → quantize → on-board context`, and a fidelity gate before publish. (A real build needs an x86_64-linux host with QAIRT installed; the CLI says so when it isn't there.)
+- ✅ **build** — **verified end-to-end**: `chipwright build mobilenet-cv` on a real x86_64-linux QAIRT host produced a w8a16 DLC (`…+qnn2.34-htpv68-w8a16-img224.dlc`) via `qairt-converter`, and `chipwright run` then verified that *built* artifact on the board — **cosine 0.956**. The full `resolve → build → run → verify` loop. Op pre-check, host preflight, declared graph adaptations, and a fidelity gate before publish are all in; on a machine without QAIRT the CLI says so plainly instead of pretending.
 
 **SDK-range in practice:** that same board runs QAIRT **2.38.0** while the artifact was tested at **2.37.1**, both inside the compatible range `>=2.34,<2.40`. It ran correctly — and `resolve` says so plainly (USE-with-warning), rather than pretending the tested point and the board agree.
 
