@@ -8,6 +8,27 @@
 
 `resolve · run · build` — Qualcomm first, cross-vendor by design.
 
+```mermaid
+flowchart LR
+    M([model]):::io
+    B([your board<br/>arch · SDK · SoC]):::io
+    M --> R{{resolve}}:::core
+    B --> R
+    R -->|exact · in-range| RUN[run on the NPU]:::step
+    R -->|no artifact,<br/>recipe exists| BLD[build<br/>convert · quantize<br/>on-board context]:::step
+    R -->|nothing fits| FAIL([refuse —<br/>name the axis]):::bad
+    BLD --> RUN
+    RUN --> V{{verify<br/>NPU vs CPU cosine}}:::core
+    V -->|≥ threshold| OK([trusted artifact]):::good
+    V -->|below| NO([caught, not shipped]):::bad
+
+    classDef io fill:#1f2430,stroke:#8a919e,color:#e8eaee;
+    classDef core fill:#7c3f1d,stroke:#b4632f,color:#fde8d7;
+    classDef step fill:#222a36,stroke:#4b5563,color:#e2e8f0;
+    classDef good fill:#14321f,stroke:#2d7d54,color:#86efac;
+    classDef bad fill:#3b1a16,stroke:#b23a2c,color:#f5a3a3;
+```
+
 ---
 
 ## The problem
