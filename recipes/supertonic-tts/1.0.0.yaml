@@ -1,0 +1,20 @@
+# Supertonic-3: 4-model flow-matching TTS. Multi-graph with host stages between.
+name: supertonic-tts
+version: 1.0.0
+route: dlc_route
+source: {format: onnx, url: supertonic/supertonic-tts, sha256: ""}
+target: {arch: v68, quant: w8a16, shape: multigraph, sdk_range: ">=2.34,<2.40"}
+adaptations:
+  - static_shape: {bucket: T64L64}            # HTP needs static text/latent buckets
+  - host_embed_split: {at: char_embed}
+  - mask_clamp: {from: -3.4e38, to: -1e4}
+  - erf_to_tanh: {ops: [Erf]}                  # QAIRT 2.37 has no Erf layout inferer
+  - pad_fix: {op: Pad, mode: constant}         # rel-pos attention Pad constant input
+quant: {weights: 8, activations: 16, bias: 32, per_channel: true,   # per-channel + CLE on the vocoder
+        calibration_ref: data/tts/calib.txt, algorithm: minmax}
+host: {pre: "tts:textproc", post: "tts:denoise_loudness", deps: [numpy]}
+graphs:
+  - {id: text_encoder, runs_on: npu}
+  - {id: duration_predictor, runs_on: npu}
+  - {id: vector_estimator, runs_on: npu}       # iterated 8x (flow-matching), host noisy-latent between
+  - {id: vocoder, runs_on: npu}

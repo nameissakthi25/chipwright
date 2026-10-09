@@ -1,0 +1,15 @@
+# Qwen2.5-1.5B LLM on v68 — EXPERIMENTAL. Must be all-integer w4a16 (fp16 context-gen fails on v68).
+name: qwen2.5-1.5b
+version: 1.0.0
+route: dlc_route
+source: {format: onnx, url: Qwen/Qwen2.5-1.5B-Instruct, sha256: ""}
+target: {arch: v68, quant: w4a16, shape: ctx4096, sdk_range: ">=2.34,<2.40"}
+adaptations:
+  - static_shape: {bucket: prefill2048_decode1}   # bucketed prefill/decode graphs
+  - host_embed_split: {at: embed_tokens}
+quant: {weights: 4, activations: 16, bias: 32, per_channel: false,
+        calibration_ref: data/llm/calib.jsonl, algorithm: minmax}
+host: {pre: "llm:tokenize", post: "llm:sample", deps: [transformers]}
+graphs:
+  - {id: prefill, runs_on: npu}                    # KV cache shared with decode (weight sharing off on v68)
+  - {id: decode, runs_on: npu}

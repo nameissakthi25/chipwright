@@ -1,0 +1,14 @@
+# Streaming Zipformer RNN-T (Indian English). w8a16 is ~lossless vs float (cosine 0.988 on v68).
+name: zipformer-enin
+version: 7.0.0
+route: classic
+source: {format: onnx, url: nameissakthi/zipformer-enin-qairt-aimet, sha256: ""}
+target: {arch: v68, quant: w8a16, shape: win39, sdk_range: ">=2.34,<2.40"}
+adaptations: []
+quant: {weights: 8, activations: 16, bias: 32, per_channel: false,
+        calibration_ref: data/asr/svarah_calib.txt, algorithm: minmax}
+host: {pre: "asr:fbank", post: "asr:greedy", deps: [numpy]}
+graphs:
+  - {id: encoder, runs_on: npu}
+  - {id: decoder, runs_on: npu}
+  - {id: joiner, runs_on: npu}

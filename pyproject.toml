@@ -37,4 +37,4 @@ Specification = "https://github.com/nameissakthi25/chipwright-speckit"
 chipwright = "chipwright.cli:main"
 
 [tool.setuptools]
-packages = ["chipwright", "chipwright.modalities", "chipwright.tests", "runtime", "runtime.devices"]
+packages = ["chipwright", "chipwright.modalities", "chipwright.tests"]

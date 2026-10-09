@@ -1,0 +1,15 @@
+# Whisper small.en — attention encoder/decoder. The canonical resolve -> BUILD example.
+name: whisper-small-en
+version: 1.2.0
+route: classic
+source: {format: onnx, url: openai/whisper-small.en, sha256: ""}
+target: {arch: v68, quant: w8a16, shape: win30s, sdk_range: ">=2.34,<2.40"}
+adaptations:
+  - mask_clamp: {from: -3.4e38, to: -1e4}
+  - erf_to_tanh: {ops: [Erf]}
+quant: {weights: 8, activations: 16, bias: 32, per_channel: false,
+        calibration_ref: data/asr/librispeech_calib.txt, algorithm: minmax}
+host: {pre: "asr:logmel", post: "asr:beam", deps: [numpy]}
+graphs:
+  - {id: encoder, runs_on: npu}
+  - {id: decoder, runs_on: npu}                # cross-attention; heavier on v6x

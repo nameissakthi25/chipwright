@@ -1,0 +1,15 @@
+# ModernBERT joint intent(12)+slot(17). w8a16 PTQ collapses on v68 (~42%); QAT recovers it to 100%.
+name: laya-intent
+version: 1.0.0
+route: dlc_route
+source: {format: onnx, url: convaiinnovations/laya, sha256: ""}
+target: {arch: v68, quant: w8a16, shape: win256, sdk_range: ">=2.34,<2.40"}
+adaptations:
+  - host_embed_split: {at: embed_tokens}     # V68 mis-Gathers on-chip — keep the embedding on the host
+  - mask_clamp: {from: -3.4e38, to: -1e4}     # int16-safe attention mask fill
+quant: {weights: 8, activations: 16, bias: 32, per_channel: false,
+        calibration_ref: data/intent/calib.jsonl, algorithm: qat}   # QAT, not PTQ — the fidelity fix
+host: {pre: "intent:tokenize", post: "intent:heads", deps: [transformers, onnxruntime]}
+graphs:
+  - {id: encoder, runs_on: npu}
+  - {id: heads, runs_on: host}                # intent + slot heads stay host-float
