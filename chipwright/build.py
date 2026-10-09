@@ -157,12 +157,27 @@ def calibration(recipe: Recipe, env: Optional[Env]) -> Optional[dict]:
             "algorithm": recipe.quant.algorithm, "logs": logs}
 
 
+def adapt_graph(recipe: Recipe, env: Optional[Env], logs: List[str]) -> None:
+    """Apply the recipe's declared graph adaptations to the source ONNX, before conversion.
+
+    Writes an `adapted.onnx` next to the source that `convert` then prefers. A no-op when the recipe
+    declares no supported adaptation (convert uses the source as-is)."""
+    from . import adapt
+    p = _paths(recipe, env)
+    _, alogs = adapt.apply(p["onnx"], recipe.adaptations, p["work"])
+    logs.extend(alogs)
+
+
 def convert(recipe: Recipe, env: Optional[Env]) -> str:
-    """qairt-converter: ONNX (+ encodings) → DLC. Returns the DLC path. Guarded on the converter."""
+    """qairt-converter: ONNX (+ encodings) → DLC. Returns the DLC path. Guarded on the converter.
+
+    Prefers an `adapted.onnx` produced by `adapt_graph` over the raw source when present."""
     logs: List[str] = []
     tool = _tool("qairt-converter", env)
     p = _paths(recipe, env)
-    cmd = [tool, "--input_network", p["onnx"]]
+    adapted = os.path.join(p["work"], "adapted.onnx")
+    onnx_in = adapted if os.path.exists(adapted) else p["onnx"]
+    cmd = [tool, "--input_network", onnx_in]
     if os.path.exists(p["enc"]):                              # quantization overrides from calibration
         cmd += ["--quantization_overrides", p["enc"]]
     cmd += ["-o", p["dlc"]]
@@ -238,6 +253,7 @@ def classic(recipe: Recipe, env: Optional[Env] = None, target=None) -> BuildResu
     tgt = _resolve_target(recipe, target)
     try:
         op_gate(recipe, env, res.logs)
+        adapt_graph(recipe, env, res.logs)
         calib = calibration(recipe, env)
         res.logs += (calib or {}).get("logs", [])
         _ = convert(recipe, env); res.logs += getattr(convert, "last_logs", [])
@@ -260,6 +276,7 @@ def dlc_route(recipe: Recipe, env: Optional[Env] = None, target=None) -> BuildRe
     tgt = _resolve_target(recipe, target)
     try:
         op_gate(recipe, env, res.logs)
+        adapt_graph(recipe, env, res.logs)
         calib = calibration(recipe, env)
         res.logs += (calib or {}).get("logs", [])
         _ = convert(recipe, env); res.logs += getattr(convert, "last_logs", [])

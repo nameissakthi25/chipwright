@@ -55,7 +55,10 @@ def _onnx_op_types(onnx_path: str) -> (List[str], Dict[str, Any], Optional[str])
             if vi.type.tensor_type.elem_type == fp16:
                 has_fp16 = True
                 break
-        return ops, {"fp16": has_fp16}, None
+        # Reshape allowzero=1 — qairt-converter rejects it (ViT / detector exports hit this)
+        allowzero = any(n.op_type == "Reshape" and any(a.name == "allowzero" and a.i == 1
+                                                       for a in n.attribute) for n in m.graph.node)
+        return ops, {"fp16": has_fp16, "reshape_allowzero": allowzero}, None
     except ImportError:
         pass
     except Exception as e:  # a corrupt/partial file — degrade rather than crash the whole gate
@@ -100,6 +103,10 @@ def will_it_run(onnx_path: str, target: Any) -> OpReport:
         flags.append({"op": "<fp16-tensor>",
                       "reason": f"a surviving FP16 tensor on an {arch} context — clamp the mask "
                                 f"(-3.4e38 → -1e4) and quantize (adaptation: mask_clamp)"})
+    # Reshape allowzero=1 — the converter rejects it outright; lossless to clear (no literal-0 dim)
+    if info.get("reshape_allowzero"):
+        flags.append({"op": "Reshape(allowzero=1)",
+                      "reason": "qairt-converter rejects allowzero=1; set it to 0 (adaptation: reshape_allowzero)"})
 
     return OpReport(supported=not unsupported, unsupported=unsupported, flags=flags, note=note)
 
