@@ -145,7 +145,8 @@ def calibration(recipe: Recipe, env: Optional[Env]) -> Optional[dict]:
     ranges). Guarded on `qairt-quantizer` presence.
     """
     logs: List[str] = []
-    if not recipe.quant.calibration_ref:
+    ref = str(recipe.quant.calibration_ref or "")
+    if ref in ("", "embedded"):                               # QDQ / baked ranges — no calibration pass
         return None
     tool = _tool("qairt-quantizer", env)                      # PreflightError if the toolchain is absent
     p = _paths(recipe, env)
@@ -187,10 +188,22 @@ def convert(recipe: Recipe, env: Optional[Env]) -> str:
 
 
 def quantize(recipe: Recipe, calib: Optional[dict], env: Optional[Env]) -> str:
-    """qairt-quantizer: DLC → quantized DLC at the recipe's bitwidths (w8a16 default). Returns the path."""
+    """qairt-quantizer: DLC → quantized DLC at the recipe's bitwidths (w8a16 default). Returns the path.
+
+    A QDQ / embedded-encoding ONNX (`calibration_ref` empty or `embedded`) is already quantized by
+    `convert`, so this is a pass-through — no re-quantization."""
     logs: List[str] = []
-    tool = _tool("qairt-quantizer", env)
     p = _paths(recipe, env)
+    ref = str(recipe.quant.calibration_ref or "")
+    if ref in ("", "embedded"):
+        import shutil
+        logs.append("quantize: encodings embedded in the ONNX (QDQ) — convert produced the quantized "
+                    "DLC; pass-through")
+        if os.path.exists(p["dlc"]):
+            shutil.copy(p["dlc"], p["qdlc"])
+        quantize.last_logs = logs
+        return p["qdlc"] if os.path.exists(p["qdlc"]) else p["dlc"]
+    tool = _tool("qairt-quantizer", env)
     cmd = [tool, "--input_dlc", p["dlc"], "--output_dlc", p["qdlc"],
            "--act_bitwidth", str(recipe.quant.activations),
            "--bias_bitwidth", str(recipe.quant.bias)]

@@ -277,3 +277,26 @@ models:
           vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.998,
                          note: "per-pixel semantic mask; w8a8 near-lossless vs float"}
           latency_ms: {note: "520x520; DLC compiled to context on-board (spills to DDR)"}
+
+  # --- BUILT BY chipwright build (on the A100) then verified on the board — full loop ------------
+  - model: mobilenet-cv-built
+    source: qualcomm/MobileNet-v2
+    license: bsd-3-clause
+    modality: cv-classification
+    version: 1.0.0
+    variants:
+      - arch: v68
+        quant: w8a16
+        shape: img224
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: dlc
+        local: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-cv-built/built.dlc
+        run: {modality: cv, board_name: mobilenet_built, meta: "", cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-cv-built/mobilenet_v2.onnx, input: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-cv-built/input.npy, threshold: 0.95}
+        verified:
+          "on": "QCS6490 (soc_id 498)"
+          date: 2026-10-09
+          loads: true
+          vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.956,
+                         note: "the artifact chipwright BUILT (real qairt-converter on the A100) then verified on the board — full build->run->verify loop"}
+          latency_ms: {note: "built via dlc_route; context compiled on-board"}
