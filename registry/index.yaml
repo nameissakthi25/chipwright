@@ -300,3 +300,44 @@ models:
           vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.956,
                          note: "the artifact chipwright BUILT (real qairt-converter on the A100) then verified on the board — full build->run->verify loop"}
           latency_ms: {note: "built via dlc_route; context compiled on-board"}
+
+  # --- CV monocular depth (ViT/DINOv2), w8a16 — unblocked by the reshape_allowzero adaptation ------
+  - model: depth-anything-v2
+    source: qualcomm/Depth-Anything-V2
+    license: apache-2.0
+    modality: cv-depth
+    version: 1.0.0
+    variants:
+      - arch: v68
+        quant: w8a16
+        shape: img518
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: dlc
+        local: /Users/nameissakthi/Desktop/personal/chipwright-models/depth-anything-v2/depth_w8a16.dlc
+        run: {modality: cv, board_name: depth, meta: "", cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/depth-anything-v2/depth_anything_v2.onnx, input: /Users/nameissakthi/Desktop/personal/chipwright-models/depth-anything-v2/input.npy, threshold: 0.90}
+        verified:
+          on: "QCS6490 (soc_id 498)"
+          date: 2026-10-09
+          loads: true
+          vs_reference: {backend: onnxruntime-cpu, metric: depth_cosine, value: 0.99996}
+
+  - model: movenet
+    source: qualcomm/MoveNet
+    license: apache-2.0
+    modality: cv-pose
+    version: 1.0.0
+    variants:
+      - arch: v68
+        quant: w8a16
+        shape: img192
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: dlc
+        local: /Users/nameissakthi/Desktop/personal/chipwright-models/movenet/pose_w8a16.dlc
+        run: {modality: cv, board_name: pose, meta: "", cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/movenet/movenet.onnx, input: /Users/nameissakthi/Desktop/personal/chipwright-models/movenet/input.npy, threshold: 0.90}
+        verified:
+          on: "QCS6490 (soc_id 498)"
+          date: 2026-10-09
+          loads: true
+          vs_reference: {backend: onnxruntime-cpu, metric: keypoint_cosine, value: 0.91607}

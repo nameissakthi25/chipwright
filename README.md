@@ -193,7 +193,7 @@ registry/
 ## Status
 
 - ✅ **resolve** — done, with the four honest outcomes, offline targets, and axis-named failures.
-- ✅ **run** — done and **verified on hardware**, four real models pulled from Hugging Face, on a live QCS6490 / RB3 Gen2:
+- ✅ **run** — done and **verified on hardware**, six real models pulled from Hugging Face, on a live QCS6490 / RB3 Gen2:
 
   | model | task | quant | cosine |
   |---|---|---|---|
@@ -201,8 +201,10 @@ registry/
   | `mobilenet-v2` | image classification | w8a16 | **0.956** |
   | `quicksrnet-small` | super-resolution | w8a8 | **0.9999** |
   | `fcn-resnet50` | semantic segmentation | w8a8 | **0.998** |
+  | `depth-anything-v2` | depth estimation (DINOv2 **ViT**) | w8a16 | **0.99996** |
+  | `movenet` | pose estimation (17 keypoints) | w8a16 | **0.916** |
 
-  Two modalities, three CV tasks, two quant profiles — the quant axis is real, and every run ends in a measured number. The gate earns its keep: a random-noise input to MobileNet correctly **FAILs** at 0.776, and a MediaPipe face detector surfaced a genuine w8a8 fidelity loss on its secondary score head (0.80 vs 0.98 elsewhere) — caught, not shipped. A Depth-Anything ViT was **refused at convert** (an unsupported reshape attribute) rather than built into garbage — the honest boundary, handled by a recipe adaptation.
+  Two input modalities, five CV tasks, two quant profiles — the quant axis is real, and every run ends in a measured number. The gate earns its keep: a random-noise input to MobileNet correctly **FAILs** at 0.776, and a MediaPipe face detector surfaced a genuine w8a8 fidelity loss on its secondary score head (0.80 vs 0.98 elsewhere) — caught, not shipped. The cosine spread is itself the signal: a ViT depth head converts near-perfectly (0.99996), while a pose keypoint+confidence head shows real quant softness (0.916) yet still clears the bar — the number tells you which is which. Getting that Depth-Anything ViT to convert at all needed a recipe adaptation (an unsupported `Reshape allowzero` attribute, patched across 29 nodes) — the honest boundary, handled rather than papered over.
 - ✅ **build** — **verified end-to-end**: `chipwright build mobilenet-cv` on a real x86_64-linux QAIRT host produced a w8a16 DLC (`…+qnn2.34-htpv68-w8a16-img224.dlc`) via `qairt-converter`, and `chipwright run` then verified that *built* artifact on the board — **cosine 0.956**. The full `resolve → build → run → verify` loop. Op pre-check, host preflight, declared graph adaptations, and a fidelity gate before publish are all in; on a machine without QAIRT the CLI says so plainly instead of pretending.
 
 **SDK-range in practice:** that same board runs QAIRT **2.38.0** while the artifact was tested at **2.37.1**, both inside the compatible range `>=2.34,<2.40`. It ran correctly — and `resolve` says so plainly (USE-with-warning), rather than pretending the tested point and the board agree.
