@@ -27,6 +27,12 @@ def run_variant(variant, input_path=None):
         raise RuntimeError(f"variant for {variant.model} has no run block (modality/meta/cpu_onnx)")
 
     # locate the artifact: a local file, or fetched by hash into the content-addressed cache
+    if not variant.local and not variant.url:
+        raise RuntimeError(
+            f"{variant.model}: this variant carries a verification record but no runnable artifact "
+            f"in the active registry (no hosted url, no local path). Build it with "
+            f"`chipwright build {variant.model}`, or set CW_REGISTRY to a registry that has the "
+            f"artifact (the author's dev registry is registry/index.dev.yaml).")
     if variant.local:
         art = os.path.expanduser(variant.local)
         if not os.path.exists(art):
@@ -45,7 +51,12 @@ def run_variant(variant, input_path=None):
     ctx_board = dev.ensure_ctx(art, board_name)
 
     mod = importlib.import_module(f".modalities.{r['modality']}", __package__)
-    meta = os.path.expanduser(r["meta"])
+    if not r.get("cpu_onnx") or not (input_path or r.get("input")):
+        raise RuntimeError(
+            f"{variant.model}: the run block has no CPU reference (cpu_onnx) and/or input in the "
+            f"active registry, so the verification gate can't run. Pass --input, or use a registry "
+            f"that carries the reference (registry/index.dev.yaml).")
+    meta = os.path.expanduser(r.get("meta") or "")
     cpu_onnx = os.path.expanduser(r["cpu_onnx"])
     inp = os.path.expanduser(input_path or r["input"])
     print("  running on NPU + CPU reference …", flush=True)

@@ -8,336 +8,320 @@
 # tested at QAIRT 2.37.1 with a compatible range >=2.34,<2.40, so the board's in-field 2.38.0 is
 # in-range (resolves USE_WITH_WARN, not a refusal).
 registry_schema: 1
-
 models:
-  # --- USE path: a hosted, verified artifact for v68 -------------------------------------------
-  # Laya intent typed-decision head (ModernBERT). The only entry with a hosted artifact today.
-  - model: laya-decision
-    source: convaiinnovations/laya
-    license: apache-2.0
-    modality: typed-decision
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: win256
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        url: https://huggingface.co/nameissakthi/laya-qcs6490-encoder/resolve/main/ctx/laya_encoder_256_sqnr_ctx.bin
-        sha256: b338a4067e9d9d3147aa8e016892450e51018de6db425ef2e3a4e533a4548a54
-        verified:
-          "on": QCS6490
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu, metric: hidden_state_pearson, value: 0.88}
-          latency_ms: {p50: 84}
-
-  # --- BUILD path + a real on-device verification record: Laya joint intent+slot --------------
-  # ModernBERT joint model: 12-way intent classifier + 17-tag BIO slot tagger, one graph.
-  # QAT w8a16 recovers the full on-device accuracy the PTQ baseline (42.5%) lost: 100% top-1,
-  # 120/120 agreeing with fp32 AND with the gold labels, 0 missing. Recipe-only: the DLC lives
-  # off-repo; the resolver offers to build it, and the record proves the recipe's output.
-  - model: laya-intent
-    source: convaiinnovations/laya
-    license: apache-2.0
-    modality: intent-slot
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: win256
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        recipe: recipes/laya-intent/1.0.0.yaml
-        verified:
-          "on": "QCS6490 (soc_id 498)"
-          loads: true
-          vs_reference: {metric: top1_vs_fp32, value: 1.00, ptq_baseline: 0.425}
-          task_metric:
-            name: intent_top1
-            value: 1.00
-            note: "held-out synthetic test; fp32 also ~100% — proves QAT removed the on-device quantization loss, not real-world accuracy"
-          latency_ms: {note: "120 inputs in ~3s on-device"}
-
-  # --- BUILD path, carrying a real on-device verification record (today's Jero STT) -----------
-  # Streaming RNN-T STT, Indian English. Has a built artifact on disk + a run block that executes
-  # and verifies it against the CPU-float ONNX. KEEP EXACTLY — this is the live-on-board entry.
-  - model: zipformer-enin
-    source: nameissakthi/zipformer-enin-qairt-aimet
-    license: apache-2.0
-    modality: asr
-    version: 7.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: win39          # 39-frame streaming window
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        # a built artifact on disk (not yet hosted) + how `run` executes and verifies it
-        local: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/models/encoder_w8a16_ctx.bin.bin
-        run:
-          modality: asr_encoder
-          board_name: zipformer_encoder_w8a16_ctx.bin
-          meta: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/models/encoder_meta.json
-          cpu_onnx: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/onnx_test/model/encoder.onnx
-          input: /Users/nameissakthi/Desktop/personal/zipformer-qcs6490/zipformer-enin-qairt-aimet/evaluation/utterances/sv00000.npy
-          threshold: 0.95
-        recipe: recipes/zipformer-enin/7.0.0.yaml
-        verified:
-          "on": "QCS6490 (soc_id 498)"
-          date: 2026-10-08
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu-float, metric: wer_delta,
-                         htp_wer: 0.270, cpu_float_wer: 0.287, note: "w8a16 ~lossless vs float"}
-          latency_ms: {note: "enc ~16.4 ms/chunk, RTF ~0.05 persistent-context"}
-
-  # --- BUILD path + on-device record: 4-model flow-matching TTS (Supertonic) ------------------
-  # Multi-graph pipeline: text-encoder -> duration-predictor -> vector-estimator (run 8x) ->
-  # vocoder. w8a16 on v68; vocoder uses per-channel weights + CLE. M1 voice. Recipe-only (the DLCs
-  # live off-repo). Verified by DTW-aligned log-mel correlation vs the fp32 pipeline.
-  - model: supertonic-tts
-    source: supertonic/supertonic-tts
-    license: apache-2.0
-    modality: tts
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: multigraph     # 4 graphs; vector-estimator iterated 8x
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        recipe: recipes/supertonic-tts/1.0.0.yaml
-        verified:
-          "on": "QCS6490 (soc_id 498)"
-          loads: true
-          vs_reference: {metric: logmel_corr_dtw, value: 0.77}
-          latency_ms: {note: "~3.8s wall / 3.07s audio, cold"}
-          note: "small residual buzz; w8a16 flow-matching vocoder"
-
-  # --- BUILD path: milestone-1 target, recipe-only (no hosted artifact yet) --------------------
-  # The canonical "resolve -> BUILD" example: arch matches, no artifact, a recipe can produce one.
-  - model: whisper-small-en
-    source: openai/whisper-small.en
-    license: mit
-    modality: asr
-    version: 1.2.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: win30s
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        recipe: recipes/whisper-small-en/1.2.0.yaml   # resolver offers to build; milestone-1 stops here
-
-  # --- EXPERIMENTAL: small LLM, resolves to BUILD on v68 --------------------------------------
-  # On v68 the LLM path must be all-integer w4a16 — the fp16 context-gen path fails on this HTP.
-  # Multi-graph prefill/decode with a KV cache; the build is the slow part (on-board context-gen
-  # ~30-45 min per split). Recipe-only, no verified task metric yet — do not read this as accuracy.
-  # A v68 w4a16 variant exists, so a v68 board resolves this to BUILD (experimental).
-  - model: qwen2.5-1.5b-instruct
-    source: Qwen/Qwen2.5-1.5B-Instruct
-    license: apache-2.0
-    modality: llm
-    version: 1.0.0
-    variants:
-      - arch: v68              # EXPERIMENTAL — in progress, no verified block yet
-        quant: w4a16
-        shape: ctx4096
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        recipe: recipes/qwen2.5-1.5b/1.0.0.yaml
-      - arch: v73              # also carried for v73/v75 boards
-        quant: w4a16
-        shape: ctx4096
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        recipe: recipes/qwen2.5-1.5b/1.0.0.yaml
-
-  # --- FAIL path: only v73/v75 variants exist; a v68 board gets an honest axis-named refusal ----
-  # Larger LLM we have only targeted for v73/v75. On a v68 board the resolver FAILs on htp_arch
-  # (the hard axis — a wrong-arch binary fails at load), naming the axis instead of downgrading.
-  - model: qwen2.5-7b-instruct
-    source: Qwen/Qwen2.5-7B-Instruct
-    license: apache-2.0
-    modality: llm
-    version: 1.0.0
-    variants:
-      - arch: v73
-        quant: w4a16
-        shape: ctx4096
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        recipe: recipes/qwen2.5-7b/1.0.0.yaml
-      - arch: v75
-        quant: w4a16
-        shape: ctx4096
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: qnnctx
-        recipe: recipes/qwen2.5-7b/1.0.0.yaml
-
-  # --- NEW MODALITY (CV): image classifier, DLC artifact -> on-board context -> run + cosine -------
-  # MobileNetV2 pulled from Hugging Face (Qualcomm export), converted to a w8a16 DLC with our 2.37.1
-  # toolchain. The 'ext: dlc' artifact is compiled into a context binary ON the board (durable DLC ->
-  # per-target ctx); the run block verifies NPU logits against the float ONNX. Proves the framework on
-  # a fresh model + a new modality, cheaply.
-  - model: mobilenet-v2
-    source: qualcomm/MobileNet-v2
-    license: bsd-3-clause
-    modality: cv-classifier
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: img224
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: dlc
-        local: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-v2/mobilenet_w8a16.dlc
-        run:
-          modality: cv
-          board_name: mobilenet
-          meta: ""
-          cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-v2/mobilenet_v2.onnx
-          input: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-v2/input.npy
-          threshold: 0.95
-        verified:
-          "on": "QCS6490 (soc_id 498)"
-          date: 2026-10-09
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.956,
-                         note: "real image (ImageNet 'Samoyed'); random-noise input gives 0.776 and the gate correctly FAILs it"}
-          latency_ms: {note: "single 224x224 image; DLC compiled to context on-board"}
-
-  # --- CV super-resolution (image -> image), w8a8 — a 2nd CV task + a 2nd quant profile -----------
-  # QuickSRNet-Small from Hugging Face (Qualcomm export), converted to a w8a8 DLC. Shows the framework
-  # is not classifier-only and that quant is a real axis (w8a8 here, w8a16 elsewhere).
-  - model: quicksrnet-small
-    source: qualcomm/QuickSRNetSmall
-    license: bsd-3-clause
-    modality: cv-superres
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a8
-        shape: img128
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: dlc
-        local: /Users/nameissakthi/Desktop/personal/chipwright-models/quicksrnet-small/quicksrnet_w8a8.dlc
-        run:
-          modality: cv
-          board_name: quicksrnet
-          meta: ""
-          cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/quicksrnet-small/quicksrnetsmall.onnx
-          input: /Users/nameissakthi/Desktop/personal/chipwright-models/quicksrnet-small/input.npy
-          threshold: 0.90
-        verified:
-          "on": "QCS6490 (soc_id 498)"
-          date: 2026-10-09
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.9999,
-                         note: "4x super-resolution; w8a8 upscaled image is near-lossless vs float"}
-          latency_ms: {note: "128x128 -> 512x512; DLC compiled to context on-board"}
-
-  # --- CV semantic segmentation (image -> per-pixel class mask), w8a8 -----------------------------
-  # FCN-ResNet50 from Hugging Face (Qualcomm export), conv-based (ResNet backbone) so it converts
-  # clean. A third CV task through the same generic 'cv' runner.
-  - model: fcn-resnet50
-    source: qualcomm/FCN-ResNet50
-    license: bsd-3-clause
-    modality: cv-segmentation
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a8
-        shape: img520
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: dlc
-        local: /Users/nameissakthi/Desktop/personal/chipwright-models/fcn-resnet50/fcn_w8a8.dlc
-        run:
-          modality: cv
-          board_name: fcn
-          meta: ""
-          cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/fcn-resnet50/fcn_resnet50.onnx
-          input: /Users/nameissakthi/Desktop/personal/chipwright-models/fcn-resnet50/input.npy
-          threshold: 0.90
-        verified:
-          "on": "QCS6490 (soc_id 498)"
-          date: 2026-10-09
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.998,
-                         note: "per-pixel semantic mask; w8a8 near-lossless vs float"}
-          latency_ms: {note: "520x520; DLC compiled to context on-board (spills to DDR)"}
-
-  # --- BUILT BY chipwright build (on the A100) then verified on the board — full loop ------------
-  - model: mobilenet-cv-built
-    source: qualcomm/MobileNet-v2
-    license: bsd-3-clause
-    modality: cv-classification
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: img224
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: dlc
-        local: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-cv-built/built.dlc
-        run: {modality: cv, board_name: mobilenet_built, meta: "", cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-cv-built/mobilenet_v2.onnx, input: /Users/nameissakthi/Desktop/personal/chipwright-models/mobilenet-cv-built/input.npy, threshold: 0.95}
-        verified:
-          "on": "QCS6490 (soc_id 498)"
-          date: 2026-10-09
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu-float, metric: cosine_min, value: 0.956,
-                         note: "the artifact chipwright BUILT (real qairt-converter on the A100) then verified on the board — full build->run->verify loop"}
-          latency_ms: {note: "built via dlc_route; context compiled on-board"}
-
-  # --- CV monocular depth (ViT/DINOv2), w8a16 — unblocked by the reshape_allowzero adaptation ------
-  - model: depth-anything-v2
-    source: qualcomm/Depth-Anything-V2
-    license: apache-2.0
-    modality: cv-depth
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: img518
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: dlc
-        local: /Users/nameissakthi/Desktop/personal/chipwright-models/depth-anything-v2/depth_w8a16.dlc
-        run: {modality: cv, board_name: depth, meta: "", cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/depth-anything-v2/depth_anything_v2.onnx, input: /Users/nameissakthi/Desktop/personal/chipwright-models/depth-anything-v2/input.npy, threshold: 0.90}
-        verified:
-          on: "QCS6490 (soc_id 498)"
-          date: 2026-10-09
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu, metric: depth_cosine, value: 0.99996}
-
-  - model: movenet
-    source: qualcomm/MoveNet
-    license: apache-2.0
-    modality: cv-pose
-    version: 1.0.0
-    variants:
-      - arch: v68
-        quant: w8a16
-        shape: img192
-        sdk_tested: "2.37.1"
-        sdk_compatible: ">=2.34,<2.40"
-        ext: dlc
-        local: /Users/nameissakthi/Desktop/personal/chipwright-models/movenet/pose_w8a16.dlc
-        run: {modality: cv, board_name: pose, meta: "", cpu_onnx: /Users/nameissakthi/Desktop/personal/chipwright-models/movenet/movenet.onnx, input: /Users/nameissakthi/Desktop/personal/chipwright-models/movenet/input.npy, threshold: 0.90}
-        verified:
-          on: "QCS6490 (soc_id 498)"
-          date: 2026-10-09
-          loads: true
-          vs_reference: {backend: onnxruntime-cpu, metric: keypoint_cosine, value: 0.91607}
+- model: laya-decision
+  source: convaiinnovations/laya
+  license: apache-2.0
+  modality: typed-decision
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: win256
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    url: https://huggingface.co/nameissakthi/laya-qcs6490-encoder/resolve/main/ctx/laya_encoder_256_sqnr_ctx.bin
+    sha256: b338a4067e9d9d3147aa8e016892450e51018de6db425ef2e3a4e533a4548a54
+    verified:
+      'on': QCS6490
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu
+        metric: hidden_state_pearson
+        value: 0.88
+      latency_ms:
+        p50: 84
+- model: laya-intent
+  source: convaiinnovations/laya
+  license: apache-2.0
+  modality: intent-slot
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: win256
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    recipe: recipes/laya-intent/1.0.0.yaml
+    verified:
+      'on': QCS6490 (soc_id 498)
+      loads: true
+      vs_reference:
+        metric: top1_vs_fp32
+        value: 1.0
+        ptq_baseline: 0.425
+      task_metric:
+        name: intent_top1
+        value: 1.0
+        note: held-out synthetic test; fp32 also ~100% — proves QAT removed the on-device quantization loss, not real-world accuracy
+      latency_ms:
+        note: 120 inputs in ~3s on-device
+- model: zipformer-enin
+  source: nameissakthi/zipformer-enin-qairt-aimet
+  license: apache-2.0
+  modality: asr
+  version: 7.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: win39
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    run:
+      modality: asr_encoder
+      board_name: zipformer_encoder_w8a16_ctx.bin
+      threshold: 0.95
+    recipe: recipes/zipformer-enin/7.0.0.yaml
+    verified:
+      'on': QCS6490 (soc_id 498)
+      date: 2026-10-08
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu-float
+        metric: wer_delta
+        htp_wer: 0.27
+        cpu_float_wer: 0.287
+        note: w8a16 ~lossless vs float
+      latency_ms:
+        note: enc ~16.4 ms/chunk, RTF ~0.05 persistent-context
+- model: supertonic-tts
+  source: supertonic/supertonic-tts
+  license: apache-2.0
+  modality: tts
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: multigraph
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    recipe: recipes/supertonic-tts/1.0.0.yaml
+    verified:
+      'on': QCS6490 (soc_id 498)
+      loads: true
+      vs_reference:
+        metric: logmel_corr_dtw
+        value: 0.77
+      latency_ms:
+        note: ~3.8s wall / 3.07s audio, cold
+      note: small residual buzz; w8a16 flow-matching vocoder
+- model: whisper-small-en
+  source: openai/whisper-small.en
+  license: mit
+  modality: asr
+  version: 1.2.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: win30s
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    recipe: recipes/whisper-small-en/1.2.0.yaml
+- model: qwen2.5-1.5b-instruct
+  source: Qwen/Qwen2.5-1.5B-Instruct
+  license: apache-2.0
+  modality: llm
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w4a16
+    shape: ctx4096
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    recipe: recipes/qwen2.5-1.5b/1.0.0.yaml
+  - arch: v73
+    quant: w4a16
+    shape: ctx4096
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    recipe: recipes/qwen2.5-1.5b/1.0.0.yaml
+- model: qwen2.5-7b-instruct
+  source: Qwen/Qwen2.5-7B-Instruct
+  license: apache-2.0
+  modality: llm
+  version: 1.0.0
+  variants:
+  - arch: v73
+    quant: w4a16
+    shape: ctx4096
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    recipe: recipes/qwen2.5-7b/1.0.0.yaml
+  - arch: v75
+    quant: w4a16
+    shape: ctx4096
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: qnnctx
+    recipe: recipes/qwen2.5-7b/1.0.0.yaml
+- model: mobilenet-v2
+  source: qualcomm/MobileNet-v2
+  license: bsd-3-clause
+  modality: cv-classifier
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: img224
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: dlc
+    run:
+      modality: cv
+      board_name: mobilenet
+      meta: ''
+      threshold: 0.95
+    verified:
+      'on': QCS6490 (soc_id 498)
+      date: 2026-10-09
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu-float
+        metric: cosine_min
+        value: 0.956
+        note: real image (ImageNet 'Samoyed'); random-noise input gives 0.776 and the gate correctly FAILs it
+      latency_ms:
+        note: single 224x224 image; DLC compiled to context on-board
+- model: quicksrnet-small
+  source: qualcomm/QuickSRNetSmall
+  license: bsd-3-clause
+  modality: cv-superres
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a8
+    shape: img128
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: dlc
+    run:
+      modality: cv
+      board_name: quicksrnet
+      meta: ''
+      threshold: 0.9
+    verified:
+      'on': QCS6490 (soc_id 498)
+      date: 2026-10-09
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu-float
+        metric: cosine_min
+        value: 0.9999
+        note: 4x super-resolution; w8a8 upscaled image is near-lossless vs float
+      latency_ms:
+        note: 128x128 -> 512x512; DLC compiled to context on-board
+- model: fcn-resnet50
+  source: qualcomm/FCN-ResNet50
+  license: bsd-3-clause
+  modality: cv-segmentation
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a8
+    shape: img520
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: dlc
+    run:
+      modality: cv
+      board_name: fcn
+      meta: ''
+      threshold: 0.9
+    verified:
+      'on': QCS6490 (soc_id 498)
+      date: 2026-10-09
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu-float
+        metric: cosine_min
+        value: 0.998
+        note: per-pixel semantic mask; w8a8 near-lossless vs float
+      latency_ms:
+        note: 520x520; DLC compiled to context on-board (spills to DDR)
+- model: mobilenet-cv-built
+  source: qualcomm/MobileNet-v2
+  license: bsd-3-clause
+  modality: cv-classification
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: img224
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: dlc
+    run:
+      modality: cv
+      board_name: mobilenet_built
+      meta: ''
+      threshold: 0.95
+    verified:
+      'on': QCS6490 (soc_id 498)
+      date: 2026-10-09
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu-float
+        metric: cosine_min
+        value: 0.956
+        note: the artifact chipwright BUILT (real qairt-converter on the A100) then verified on the board — full build->run->verify
+          loop
+      latency_ms:
+        note: built via dlc_route; context compiled on-board
+- model: depth-anything-v2
+  source: qualcomm/Depth-Anything-V2
+  license: apache-2.0
+  modality: cv-depth
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: img518
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: dlc
+    run:
+      modality: cv
+      board_name: depth
+      meta: ''
+      threshold: 0.9
+    verified:
+      true: QCS6490 (soc_id 498)
+      date: 2026-10-09
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu
+        metric: depth_cosine
+        value: 0.99996
+- model: movenet
+  source: qualcomm/MoveNet
+  license: apache-2.0
+  modality: cv-pose
+  version: 1.0.0
+  variants:
+  - arch: v68
+    quant: w8a16
+    shape: img192
+    sdk_tested: 2.37.1
+    sdk_compatible: '>=2.34,<2.40'
+    ext: dlc
+    run:
+      modality: cv
+      board_name: pose
+      meta: ''
+      threshold: 0.9
+    verified:
+      true: QCS6490 (soc_id 498)
+      date: 2026-10-09
+      loads: true
+      vs_reference:
+        backend: onnxruntime-cpu
+        metric: keypoint_cosine
+        value: 0.91607

@@ -47,23 +47,45 @@ def test_recipe_only_variant_has_recipe_not_artifact():
     assert whisper.recipe.endswith(".yaml")
 
 
-def test_local_field_parses_as_on_disk_artifact():
-    reg = Registry()
-    zf = reg.variants("zipformer-enin")[0]
+# The public registry is portable (no author-local paths — see spec 003), so the `local` and
+# run-asset fields are exercised against a fixture registry, not the shipped index. This tests the
+# PARSER capability without coupling it to machine-specific content.
+_FIXTURE = """registry_schema: 1
+models:
+  - model: fixture-model
+    variants:
+      - arch: v68
+        quant: w8a16
+        shape: win39
+        sdk_tested: "2.37.1"
+        sdk_compatible: ">=2.34,<2.40"
+        ext: qnnctx
+        local: /tmp/fixture_artifact.bin
+        run: {modality: asr_encoder, board_name: fx, meta: /tmp/m.json, cpu_onnx: /tmp/e.onnx, input: /tmp/i.npy, threshold: 0.95}
+"""
+
+
+def _fixture_registry(tmp_path):
+    p = tmp_path / "fixture_index.yaml"
+    p.write_text(_FIXTURE)
+    return Registry(index=str(p))
+
+
+def test_local_field_parses_as_on_disk_artifact(tmp_path):
+    v = _fixture_registry(tmp_path).variants("fixture-model")[0]
     # a `local:` path counts as a present artifact even with no url
-    assert zf.url is None
-    assert zf.local is not None and zf.local.endswith(".bin")
-    assert zf.has_artifact is True
+    assert v.url is None
+    assert v.local is not None and v.local.endswith(".bin")
+    assert v.has_artifact is True
 
 
-def test_run_field_parses_into_dict():
-    reg = Registry()
-    zf = reg.variants("zipformer-enin")[0]
-    assert isinstance(zf.run, dict)
-    assert zf.run["modality"] == "asr_encoder"
-    assert zf.run["threshold"] == 0.95
+def test_run_field_parses_into_dict(tmp_path):
+    v = _fixture_registry(tmp_path).variants("fixture-model")[0]
+    assert isinstance(v.run, dict)
+    assert v.run["modality"] == "asr_encoder"
+    assert v.run["threshold"] == 0.95
     for key in ("board_name", "meta", "cpu_onnx", "input"):
-        assert key in zf.run
+        assert key in v.run
 
 
 def test_verified_record_parses():
