@@ -9,11 +9,26 @@ from __future__ import annotations
 
 import glob
 import os
+import shutil
 import subprocess
 import tempfile
 import time
 
 import numpy as np
+
+
+def _require_sshpass():
+    """`sshpass` is a system binary (not a pip package) the SSH transport shells out to.
+
+    Fail here, by name, with the install hint — not later with a cryptic FileNotFoundError from
+    subprocess — so a missing system dependency is reported the way the framework reports everything:
+    plainly, naming the fix.
+    """
+    if shutil.which("sshpass") is None:
+        raise RuntimeError(
+            "chipwright run needs the `sshpass` system binary to reach the board over SSH, and it "
+            "is not on PATH. Install it: `brew install hudochenkov/sshpass/sshpass` (macOS) or "
+            "`apt-get install sshpass` (Debian/Ubuntu).")
 
 
 def _ssh(pw, port, dest, *cmd, timeout=600, capture=True):
@@ -34,6 +49,7 @@ def _scp(pw, port, *args, timeout=1800):
 class RemoteQNN:
     def __init__(self, host, user, pw, port=22, backend="/usr/lib/libQnnHtp.so",
                  board_dir="/opt/chipwright"):
+        _require_sshpass()
         self.host, self.user, self.pw, self.port = host, user, pw, int(port)
         self.backend, self.board_dir = backend, board_dir
         self.dest = f"{user}@{host}"

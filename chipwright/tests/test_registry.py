@@ -1,4 +1,4 @@
-"""Registry — load the bundled registry/index.yaml (read-only) and check Variant parsing.
+"""Registry — load the bundled public index (chipwright/data/index.yaml, read-only) and check Variant parsing.
 
 Uses the real seed index so the test fails if the shipped index stops parsing. Also runnable as
 `python3 test_registry.py`.

@@ -4,17 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chipwright"
-version = "0.1.0"
+version = "0.2.0"
 description = "A verified package manager for Qualcomm NPUs — resolve the artifact that loads on your exact chip, run it, and prove it against a CPU reference."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 keywords = ["npu", "qualcomm", "hexagon", "qnn", "edge-ai", "quantization", "inference", "package-manager"]
+# Pure-Python runtime deps. NOTE: `run` also needs the `sshpass` SYSTEM binary (not a pip package)
+# to reach a board over SSH — `apt-get install sshpass` / `brew install hudochenkov/sshpass/sshpass`.
+# Its absence is reported by name at run time (see chipwright/device.py::_require_sshpass).
 dependencies = ["pyyaml>=6", "numpy>=1.24"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development :: Build Tools",
@@ -38,3 +41,7 @@ chipwright = "chipwright.cli:main"
 
 [tool.setuptools]
 packages = ["chipwright", "chipwright.modalities", "chipwright.tests"]
+
+[tool.setuptools.package-data]
+# The portable public registry index ships inside the package (see registry.py::DEFAULT_INDEX).
+chipwright = ["data/*.yaml"]

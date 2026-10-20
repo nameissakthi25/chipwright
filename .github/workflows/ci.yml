@@ -30,3 +30,34 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+  cleanroom:
+    name: clean-room install (a stranger can install + run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build the wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: twine check (metadata is publishable)
+        run: python -m twine check dist/*
+
+      - name: Install the built wheel in an isolated venv (no repo on path)
+        run: |
+          python -m venv /tmp/cw && /tmp/cw/bin/pip install --upgrade pip
+          /tmp/cw/bin/pip install dist/*.whl
+
+      - name: Use it with NONE of the author's assets (run from /tmp, repo not importable)
+        run: |
+          cd /tmp
+          /tmp/cw/bin/chipwright --help
+          /tmp/cw/bin/chipwright list
+          /tmp/cw/bin/chipwright --target htpv68,qnn2.38 resolve zipformer-enin

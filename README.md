@@ -160,10 +160,10 @@ A high cosine is necessary, not sufficient — a cosine of 0.99 can still cost t
 
 ## Architecture
 
-Three front doors, one core, three targets.
+One front door today, one core, three targets.
 
-- **Three front doors** — the `chipwright` CLI, a desktop app, and Claude Code skills. Each is a thin surface.
-- **One core** — [`chipwright-core`](chipwright/) holds all the logic: tags, board probe, resolver, registry client, cache, device transport, verification, and the run loop. The front doors call it; they don't reimplement it.
+- **The front door** — the `chipwright` CLI (`doctor · resolve · run · build`), a thin surface over the core. The core is deliberately UI-agnostic so other surfaces (a desktop app, editor integrations) can call the same logic later without reimplementing it; today the CLI is what ships.
+- **One core** — [`chipwright-core`](chipwright/) holds all the logic: tags, board probe, resolver, registry client, cache, device transport, verification, and the run loop.
 - **Three targets** — the core reaches the **registry** (the index of verified variants), the **board** (probe and execute), and the **build-host** (produce an artifact from a recipe).
 
 See [`docs/architecture.md`](docs/architecture.md) for the diagram and the module map.

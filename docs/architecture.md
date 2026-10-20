@@ -1,16 +1,19 @@
 # Architecture
 
-Chipwright is built as **three front doors over one core, reaching three targets**. The shape is deliberate: every surface a user touches is thin, all the judgement lives in one place, and that one place talks to exactly three things in the outside world.
+Chipwright is built as **a thin front door over one core, reaching three targets**. The shape is deliberate: the surface a user touches is thin, all the judgement lives in one place, and that one place talks to exactly three things in the outside world. The core is UI-agnostic so additional surfaces can be added later without moving any logic into them.
 
-## Three front doors
+## The front door
 
-A developer meets Chipwright through whichever door fits their workflow. None of them hold logic of their own — each translates a request into a `chipwright-core` call and renders the result.
+A developer meets Chipwright through a surface that holds no logic of its own — it translates a request into a `chipwright-core` call and renders the result.
 
-- **CLI** — `chipwright doctor · resolve · run`. The reference surface, and the one used in CI.
-- **Desktop app** — a graphical surface over the same core, for browsing the registry and driving a board without the terminal.
-- **Claude Code skills** — the core's verbs exposed to an agent, so "resolve this model for my board and verify it" is a tool call.
+- **CLI** — `chipwright doctor · resolve · run · build`. **The surface that ships today**, and the one used in CI.
 
-Because the doors are thin, they can't drift from each other. A behavior change happens once, in the core, and all three doors inherit it.
+Two further surfaces are *planned* design targets, not shipped — they are why the core is kept UI-agnostic, and are drawn dashed in the diagram below:
+
+- **Desktop app** *(planned)* — a graphical surface over the same core, for browsing the registry and driving a board without the terminal.
+- **Claude Code skills** *(planned)* — the core's verbs exposed to an agent, so "resolve this model for my board and verify it" is a tool call.
+
+Because any door is thin, the surfaces can't drift from each other: a behavior change happens once, in the core, and every surface inherits it.
 
 ## One core
 
@@ -22,17 +25,18 @@ The core reaches out to exactly three things:
 
 - **Registry** — the index of verified variants. A git-repo file, read and cached; artifacts live by hash in object storage. Reviewable in pull requests, which is what makes a verification record trustworthy.
 - **Board** — the physical NPU. The core probes it for its target key (arch × SDK × SoC) and pushes + executes artifacts on it over SSH.
-- **Build-host** — where an artifact is produced from a recipe when no hosted variant matches the chip. *(The `build` verb — next milestone.)*
+- **Build-host** — where an artifact is produced from a recipe when no hosted variant matches the chip. The `build` verb drives it (verified end-to-end: `qairt-converter` on a QAIRT host → DLC → on-board context → verification gate).
 
 ## Diagram
 
 ```mermaid
 flowchart TB
-    subgraph doors[Three front doors]
-        CLI[chipwright CLI]
-        APP[Desktop app]
-        SKILL[Claude Code skills]
+    subgraph doors[Front door]
+        CLI[chipwright CLI — ships today]
+        APP[Desktop app · planned]:::planned
+        SKILL[Claude Code skills · planned]:::planned
     end
+    classDef planned stroke-dasharray: 5 4,stroke:#88a,fill:#f6f6fb;
 
     subgraph core[chipwright-core]
         direction TB
@@ -82,7 +86,7 @@ The core is a handful of small modules, each owning one job. Read them in roughl
 | `device` | The remote QNN runner. Push a context binary to the board and execute it over SSH. Quantization-agnostic: it moves raw bytes in the graph's native dtype. |
 | `verify` | The NPU-vs-CPU cosine — the check that catches a fast wrong answer. A high cosine is necessary, not sufficient, so it stays separate from the task metric. |
 | `run` | The `run` verb. Ties the resolver, the device transport, and a modality runner together, and ends in the verification cosine. |
-| `cli` | The `chipwright` command surface — `doctor`, `resolve`, `run` — rendering core decisions for a human. |
+| `cli` | The `chipwright` command surface — `doctor`, `resolve`, `run`, `build` — rendering core decisions for a human. |
 | `modalities` | Per-task glue (frontend, decoders, CPU reference) a `chipwright-<modality>` package owns. The core calls each through a uniform `run(device, …)`. First runner: ASR. |
 
 ## Why this shape

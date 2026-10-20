@@ -14,9 +14,10 @@ import yaml
 
 from .resolver import Variant
 
-# Default index: the local registry/ file in this repo (becomes a git URL once published).
-DEFAULT_INDEX = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "registry", "index.yaml")
+# Default index: the portable public index bundled inside the package, so it ships in the wheel and
+# resolves after `pip install` (not only in a source checkout). The author's machine-specific overlay
+# is loaded instead via CW_REGISTRY (see registry/index.dev.yaml, git-ignored).
+DEFAULT_INDEX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "index.yaml")
 
 
 def _load_yaml(src: str) -> dict:
