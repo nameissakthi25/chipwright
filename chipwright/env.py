@@ -21,6 +21,9 @@ SOC_ID = {
     30:  ("QCS8250 / RB5", "v66"),
     57:  ("QCS8550", "v73"),
     69:  ("QCS8650", "v75"),
+    # QDC fleet soc_ids (verified on-device via `chipwright doctor`):
+    603: ("QCS8550 / kalama", "v73"),
+    660: ("SM8850 / Snapdragon 8 Elite Gen 5", "v81"),
 }
 
 
@@ -86,12 +89,24 @@ def probe(host: str, user: str, pw: str, port: int = 22) -> TargetKey:
     soc_id = int(out["SOC"]) if out.get("SOC", "").strip().isdigit() else None
     soc_name, arch = SOC_ID.get(soc_id, (None, "unknown"))
     libs = tuple(out.get("LIBS", "").split()) if out.get("LIBS", "").strip() else ()
-    # arch fallback from the on-device lib name (libQnnHtpV68.so -> v68)
+    # arch fallback from the on-device lib name (libQnnHtpV68.so -> v68). Only trust it when every
+    # HTP arch lib on the board agrees on one version — a board carrying multiple arch stubs
+    # (libQnnHtpV68Stub.so, libQnnHtpV73Stub.so, …) is ambiguous, so we must NOT guess, and we strip
+    # any suffix (…Stub, …CalculatorStub) so we never emit a garbage arch like "v68CalculatorStub".
     if arch == "unknown":
+        found = set()
         for lib in libs:
-            if lib.startswith("libQnnHtpV") and lib.endswith(".so"):
-                arch = "v" + lib[len("libQnnHtpV"):-len(".so")]
-                break
+            if lib.startswith("libQnnHtpV"):
+                digits = ""
+                for ch in lib[len("libQnnHtpV"):]:
+                    if ch.isdigit():
+                        digits += ch
+                    else:
+                        break
+                if digits:
+                    found.add("v" + digits)
+        if len(found) == 1:
+            arch = found.pop()
     temp = None
     if out.get("TEMP", "").strip().isdigit():
         temp = round(int(out["TEMP"]) / 1000.0, 1)
