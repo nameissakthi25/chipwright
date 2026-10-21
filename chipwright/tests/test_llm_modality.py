@@ -212,7 +212,7 @@ def test_run_pushes_bundle_file_by_file_and_parses(tmp_path=None):
             "bundle_files": ["genie_config.json", "tokenizer.json", "context_0.bin"]}
     tok = FakeTokenizer({"Paris.": [40, 1138]})         # inject: no real tokenizer.json needed
 
-    out = run(dev, d, meta, "capital of France?", tokenizer=tok)
+    out = run(dev, d, meta, "capital of France?", tokenizer=tok, profile=True)  # exercise the profile-on path
 
     pushed = [remote for _, remote in dev.pushed]
     # bundle pushed one file at a time (FR-L02: never a single multi-GB directory push)
@@ -233,6 +233,23 @@ def test_run_pushes_bundle_file_by_file_and_parses(tmp_path=None):
     assert out["text"] == "Paris."
     assert out["tokens"] == [40, 1138]
     assert out["latency"]["decode_toks_per_sec"] == 33.0
+
+
+def test_run_omits_profile_by_default():
+    """`--profile` defaults OFF: on a real SM8850/v81 board it broke genie 2.51's output and
+    false-FAILed a known-good artifact (token_match 0.0). Default run must not pass the flag."""
+    import tempfile
+    d = tempfile.mkdtemp()
+    for name in ("tokenizer.json", "genie_config.json"):
+        with open(os.path.join(d, name), "w") as f:
+            f.write("{}" if name.endswith(".json") else "x")
+    dev = FakeDevice("[BEGIN]Paris.[END]")
+    meta = {"template": "chatml", "genie_config": "genie_config.json",
+            "bundle_files": ["genie_config.json", "tokenizer.json"]}
+    out = run(dev, d, meta, "capital of France?", tokenizer=FakeTokenizer({"Paris.": [40]}))
+    cmd = " ".join(dev.shelled)
+    assert "--profile" not in cmd                 # default off (silicon finding)
+    assert out["latency"] == {}                   # no profile pulled/parsed when off
 
 
 if __name__ == "__main__":

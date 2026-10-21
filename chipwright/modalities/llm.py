@@ -200,7 +200,7 @@ def apply_greedy_to_config(config: dict) -> dict:
 # --- the modality run (drives Genie over the device interface) ------------------------------------
 
 def run(device, bundle_dir_local, meta, prompt, *, template="chatml", system=None,
-        remote_dir="/data/local/tmp/chipwright_llm", greedy=True, profile=True, tokenizer=None):
+        remote_dir="/data/local/tmp/chipwright_llm", greedy=True, profile=False, tokenizer=None):
     """Assemble the Genie bundle on the device, generate for one prompt, return text + tokens + latency.
 
     `meta` names the bundle pieces (context bins + genie_config + tokenizer + htp ext config) and the
@@ -216,8 +216,12 @@ def run(device, bundle_dir_local, meta, prompt, *, template="chatml", system=Non
          QAIRT 2.51 genie-t2t-run reads the prompt via `--prompt_file <path>`, not inline.
       3. For the greedy tripwire, emit a derived config with `sampler.top-k: 1` (genie ignores
          `sampler.greedy`) and point genie at it.
-      4. Run `genie-t2t-run -c <cfg> --prompt_file <file>` (+ `--profile` when requested), parse the
-         `[BEGIN]..[END]` text, and RETOKENIZE it into token ids (genie emits no ids on QAIRT 2.51).
+      4. Run `genie-t2t-run -c <cfg> --prompt_file <file>`, parse the `[BEGIN]..[END]` text, and
+         RETOKENIZE it into token ids (genie emits no ids on QAIRT 2.51).
+
+    `profile` defaults **off**: on a real SM8850/v81 board, passing `--profile` to QAIRT 2.51
+    genie-t2t-run broke the generation output and made even a known-good artifact score token_match
+    0.0 (false FAIL). Pass `profile=True` only on a genie build confirmed to accept the flag.
 
     Returns {text, tokens, latency, generation: <raw stdout>}. The pass/fail gate is `verify_llm`, not
     here — this returns the honest on-chip generation. `tokenizer` may be injected (a loaded Tokenizer)
