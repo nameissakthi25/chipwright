@@ -28,7 +28,7 @@ classifiers = [
 asr = ["onnxruntime>=1.16"]   # streaming encoder/decoder/joiner
 cv  = ["onnxruntime>=1.16", "pillow>=10"]   # image classifiers
 tts = ["onnxruntime>=1.16"]
-llm = []
+llm = ["onnxruntime>=1.16"]   # the CPU-reference greedy decoder (llm_reference.py) for the generative gate
 build = ["onnx>=1.14"]        # op pre-check for the build verb
 dev = ["pytest>=7"]
 
