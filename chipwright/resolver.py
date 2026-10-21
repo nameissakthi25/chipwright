@@ -43,6 +43,7 @@ class Variant:
     run: Optional[dict] = None           # how `run` executes it: {modality, meta, cpu_onnx, board_name, input}
     recipe: Optional[str] = None         # present => can be built when no artifact matches
     verified: Optional[dict] = None      # the verification record (loads / cosine / task / latency)
+    precision_support: Optional[dict] = None  # LLM: {precision: "supported"|"blocked:<r>"|"unsupported:<r>"}
 
     @property
     def has_artifact(self) -> bool:
@@ -64,6 +65,30 @@ class Decision:
     @property
     def ok(self) -> bool:
         return self.outcome in (Outcome.USE, Outcome.USE_WITH_WARN)
+
+
+# --- precision-support axis (LLM) -------------------------------------------------------------
+# Not every precision survives the qai-hub -> Genie pipeline (spec 002, FR-L06): w4a16 is supported,
+# w8a16 is blocked on a KV-cache-encoding divergence at convert, fp16 is unsupported because Genie's
+# transformer path is integer-only. A recipe declares this per model; `resolve` refuses a non-supported
+# precision and NAMES the reason — the same discipline as FAIL-names-the-axis, applied one axis earlier.
+_SUPPORTED = "supported"
+
+
+def precision_refusal(precision: Optional[str], support: Optional[dict]) -> Optional[str]:
+    """Return the named reason to refuse `precision`, or None if it is supported / not constrained.
+
+    Pure and tiny so it is trivial to test. A precision absent from the matrix is *not* refused here
+    (the matrix only constrains what it declares); the normal variant/quant matching handles the rest.
+    A declared non-"supported" status (e.g. "blocked:kv-cache-encoding") is returned verbatim so the
+    caller can quote the reason by name.
+    """
+    if not precision or not support:
+        return None
+    status = support.get(precision)
+    if status is None or status == _SUPPORTED:
+        return None
+    return str(status)
 
 
 # --- tiny semver range check (enough for QAIRT x.y.z) -----------------------------------------
@@ -88,10 +113,24 @@ def _in_range(point: str, rng: str) -> bool:
 
 
 def resolve(target: TargetKey, variants: List[Variant],
-            want_quant: Optional[str] = None, want_shape: Optional[str] = None) -> Decision:
+            want_quant: Optional[str] = None, want_shape: Optional[str] = None,
+            precision_support: Optional[dict] = None) -> Decision:
     """Return the single Decision for this board. Pure function — easy to test without a board."""
     if not variants:
         return Decision(Outcome.FAIL, reason="no variants registered for this model", axis="model")
+
+    # Axis 0 (LLM precision-support): if the caller asked for a precision the model declares as
+    # blocked/unsupported, refuse up front and name the reason — before arch/SDK matching, because the
+    # precision is unavailable through the pipeline regardless of which board is in hand. The matrix may
+    # be passed explicitly or carried on the variants (the registry populates it per model).
+    if want_quant:
+        support = precision_support
+        if support is None:
+            support = next((v.precision_support for v in variants if v.precision_support), None)
+        reason = precision_refusal(want_quant, support)
+        if reason:
+            return Decision(Outcome.FAIL, axis="precision",
+                            reason=f"precision {want_quant} is not available: {reason}")
 
     # Axis 1 (hard): Hexagon architecture must match exactly, or the binary fails at load.
     arch_ok = [v for v in variants if v.arch == target.htp_arch]

@@ -17,6 +17,12 @@ import yaml
 ROUTES = ("classic", "dlc_route")
 RUNS_ON = ("npu", "host")
 
+# Precision-support statuses an LLM recipe may declare (spec 002, FR-L06). A status is either the bare
+# word "supported" or a "<kind>:<reason>" where kind names *why* it is not available — so a blocked or
+# unsupported precision is a tracked, named limitation, never a silent gap. The reason is carried
+# through to the resolver's refusal verbatim.
+_PRECISION_KINDS = ("supported", "blocked", "unsupported")
+
 
 @dataclass
 class Source:
@@ -79,11 +85,21 @@ class Recipe:
     quant: Quant = field(default_factory=Quant)
     host: Host = field(default_factory=Host)
     graphs: List[Graph] = field(default_factory=list)
+    precision_support: Dict[str, str] = field(default_factory=dict)  # {precision: status} — LLM, FR-L06
 
     @property
     def quant_tag(self) -> str:
         """The 'w8a16'-style tag this recipe's quant block realises."""
         return f"w{self.quant.weights}a{self.quant.activations}"
+
+    def precision_status(self, precision: str) -> Optional[str]:
+        """The declared status for `precision` ('supported' / 'blocked:<r>' / 'unsupported:<r>'), or None."""
+        return self.precision_support.get(precision)
+
+    @property
+    def supported_precisions(self) -> List[str]:
+        """The precisions this recipe declares runnable through the pipeline."""
+        return [p for p, s in self.precision_support.items() if s == "supported"]
 
     def adaptation(self, kind: str) -> Optional[Adaptation]:
         """The declared adaptation of a given kind, or None (e.g. recipe.adaptation('erf_to_tanh'))."""
@@ -103,6 +119,37 @@ def _parse_adaptations(items: Any) -> List[Adaptation]:
                 out.append(Adaptation(kind=str(kind), params=params if isinstance(params, dict) else {"value": params}))
         else:
             out.append(Adaptation(kind=str(item), params={}))
+    return out
+
+
+def _parse_precision_support(items: Any) -> Dict[str, str]:
+    """Parse + validate `precision_support:` — a map {precision: status}. Raises ValueError if malformed.
+
+    A status must be "supported" or "<blocked|unsupported>:<reason>" with a non-empty reason, so a
+    recipe cannot smuggle in a vague "no" — a limitation is named or it is not a valid recipe (the same
+    strictness as the tag grammar: a status that doesn't parse is a bug, not a near-miss to paper over).
+    """
+    if not items:
+        return {}
+    if not isinstance(items, dict):
+        raise ValueError(f"precision_support must be a mapping {{precision: status}}, got {type(items).__name__}")
+    out: Dict[str, str] = {}
+    for precision, status in items.items():
+        status = str(status)
+        head = status.split(":", 1)[0]
+        if head not in _PRECISION_KINDS:
+            raise ValueError(
+                f"precision_support[{precision!r}] = {status!r}: status must start with one of "
+                f"{_PRECISION_KINDS} (e.g. 'supported' or 'blocked:kv-cache-encoding')")
+        if head != "supported" and len(status.split(":", 1)) == 2 and not status.split(":", 1)[1].strip():
+            raise ValueError(
+                f"precision_support[{precision!r}] = {status!r}: a {head!r} status must name a reason "
+                f"after the colon (e.g. '{head}:kv-cache-encoding')")
+        if head != "supported" and ":" not in status:
+            raise ValueError(
+                f"precision_support[{precision!r}] = {status!r}: a {head!r} status must name a reason "
+                f"('{head}:<reason>'); only 'supported' stands alone")
+        out[str(precision)] = status
     return out
 
 
@@ -147,7 +194,8 @@ def from_dict(doc: Dict[str, Any]) -> Recipe:
 
     return Recipe(name=str(doc["name"]), version=str(doc["version"]), route=route,
                   source=source, target=target, adaptations=_parse_adaptations(doc.get("adaptations")),
-                  quant=quant, host=host, graphs=graphs)
+                  quant=quant, host=host, graphs=graphs,
+                  precision_support=_parse_precision_support(doc.get("precision_support")))
 
 
 def load(path: str) -> Recipe:
