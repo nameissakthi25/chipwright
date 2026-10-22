@@ -29,6 +29,7 @@ asr = ["onnxruntime>=1.16"]   # streaming encoder/decoder/joiner
 cv  = ["onnxruntime>=1.16", "pillow>=10"]   # image classifiers
 tts = ["onnxruntime>=1.16"]
 llm = ["onnxruntime>=1.16", "tokenizers>=0.19"]   # CPU-reference decoder (llm_reference.py) + retokenize genie text→ids (modalities/llm.py)
+eval = ["qai-hub-models>=4.5"]   # reference-side WikiText PPL / MMLU via qai-hub's eval harness (task_eval.py)
 build = ["onnx>=1.14"]        # op pre-check for the build verb
 dev = ["pytest>=7"]
 
