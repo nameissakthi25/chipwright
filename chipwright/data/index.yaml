@@ -293,7 +293,7 @@ models:
       meta: ''
       threshold: 0.9
     verified:
-      true: QCS6490 (soc_id 498)
+      "on": QCS6490 (soc_id 498)
       date: 2026-10-09
       loads: true
       vs_reference:
@@ -318,7 +318,7 @@ models:
       meta: ''
       threshold: 0.9
     verified:
-      true: QCS6490 (soc_id 498)
+      "on": QCS6490 (soc_id 498)
       date: 2026-10-09
       loads: true
       vs_reference:

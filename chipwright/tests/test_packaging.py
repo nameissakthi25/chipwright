@@ -34,6 +34,20 @@ def test_public_index_parses_and_keeps_records():
             assert "local" not in v or not str(v.get("local", "")).startswith(("/Users", "/home")), m["model"]
 
 
+def test_verified_record_on_field_not_yaml_coerced():
+    """The verification record's device field is `on:` — which YAML 1.1 coerces to boolean `true` if
+    unquoted. Guard against a `true:` key sneaking back in: a record MUST name its device under "on"."""
+    doc = yaml.safe_load(open(PUBLIC_INDEX))
+    for m in doc.get("models", []):
+        for v in m.get("variants", []):
+            ver = v.get("verified")
+            if isinstance(ver, dict):
+                assert True not in ver, (
+                    f"{m['model']}: a verified-record key coerced to boolean true (quote `on:` as \"on\")")
+                if any(k in ver for k in ("date", "loads")):   # a real record → it names its device
+                    assert "on" in ver, f"{m['model']}: verified record missing the `on:` device field"
+
+
 def test_every_variant_is_resolvable_or_buildable():
     """Each variant either hosts an artifact (url+sha256), or is build-only, or carries a record —
     never a dangling local path that only the author can reach."""
