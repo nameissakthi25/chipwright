@@ -5,13 +5,11 @@ referenced by `url`+`sha256` in the public index — the same way `laya-decision
 (`https://huggingface.co/nameissakthi/laya-qcs6490-encoder/resolve/main/…`). This file is the manifest + the
 exact commands (the HF upload is the one step that needs your account).
 
-## Honest gap this surfaced (a small build task, flagged for the PM)
-Hosting the *artifact* lets `resolve` return **USE** and the DLC fetch into the cache. But the generative/CV
-gate also reads the run block's `cpu_onnx` and `input`, which `run.py` currently resolves as **local paths**
-only (it fetches the *artifact* by url, not the reference/input). So full public `run` needs a small change:
-`run.py` / `modalities/cv.py` MUST also fetch `cpu_onnx`+`input` by url (add `cpu_onnx_url`/`input_url`, or a
-bundled fetch). Until then, hosting makes `resolve`→USE + artifact-fetch work; the on-device gate still needs
-the reference locally. **Track as a follow-on build task** (fold into `003-chipwright-release` or a new spec).
+## The run-by-url fetch is now landed (FR-R08)
+`run` fetches the run block's `cpu_onnx`/`input`/`meta` by url (sha-verified, keeping the filename so an
+ONNX external-data sidecar resolves — see `cache.fetch_named` + `run._locate_ref`). So a **fully-hosted
+variant runs end-to-end from a clean `pip install`** with no author assets: upload the files below, paste
+the registry entry, done.
 
 ## Lead target — `mobilenet-v2` (proven 0.956 on v68, w8a16)
 Files to upload (the artifact + the CPU reference, which has an external-data sidecar, + the input):
@@ -23,11 +21,22 @@ Files to upload (the artifact + the CPU reference, which has an external-data si
 | `mobilenet_v2.data` | 13 M | *(external-data sidecar — must sit next to the .onnx)* |
 | `input.npy` | 588 K | `93f8247982c540dc1bda3942ec3671cefef9a26921221e53aba0da9fba6918f2` |
 
-Public-index entry once uploaded (artifact url+sha256; the reference/input await the fetch change above):
+Complete public-index entry once uploaded — artifact AND reference all by url (paste into the
+`mobilenet-v2` variant in `chipwright/data/index.yaml`; `HF=https://huggingface.co/nameissakthi/chipwright-cv/resolve/main`):
 ```yaml
-# chipwright/data/index.yaml — mobilenet-v2 variant
-url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/mobilenet-v2/mobilenet_w8a16.dlc
-sha256: 674e275ab45e27d90f0493216717f8fae4de4a864b0ff463573a2bbe7b01cff3
+      ext: dlc
+      url: {HF}/mobilenet-v2/mobilenet_w8a16.dlc
+      sha256: 674e275ab45e27d90f0493216717f8fae4de4a864b0ff463573a2bbe7b01cff3
+      run:
+        modality: cv
+        board_name: mobilenet_w8a16.dlc
+        threshold: 0.95
+        cpu_onnx: {HF}/mobilenet-v2/mobilenet_v2.onnx
+        cpu_onnx_sha256: 8d0b30c659317596eedd46e30b65eac658a293c181bc0d8dff27c5d29ae5f284
+        cpu_onnx_sidecars:
+          - {url: "{HF}/mobilenet-v2/mobilenet_v2.data", sha256: "da61b048c0d696bb8bc0260e644f71f998c6c5b203746258d1e7fc41b329a36f", name: mobilenet_v2.data}
+        input: {HF}/mobilenet-v2/input.npy
+        input_sha256: 93f8247982c540dc1bda3942ec3671cefef9a26921221e53aba0da9fba6918f2
 ```
 
 ## Upload commands (your account — HF namespace `nameissakthi`)
