@@ -21,6 +21,34 @@ def _board_env():
                 port=int(os.environ.get("CW_BOARD_PORT", 22)))
 
 
+def _looks_url(s):
+    return isinstance(s, str) and s.startswith(("http://", "https://"))
+
+
+def _locate_ref(r, key, override=None):
+    """Locate a run-block reference (cpu_onnx / input / meta): a local path, or a HOSTED url fetched into
+    the cache so a stranger's `run` works, not only the author's.
+
+    A url value is sha-verified via a companion `<key>_sha256` (refusing by name if absent — never an
+    unverified reference) and fetched with its original filename so an ONNX's external-data sidecar
+    resolves; declare sidecars under `<key>_sidecars: [{url, sha256, name}]`.
+    """
+    val = override if override is not None else r.get(key)
+    if val is None:
+        return None
+    if _looks_url(val):
+        sha = r.get(f"{key}_sha256")
+        if not sha:
+            raise RuntimeError(
+                f"run block {key} is a url but carries no {key}_sha256 — refusing to fetch an unverified "
+                f"reference (a reference the gate can't trust is worse than none).")
+        from . import cache
+        sidecars = [(s["url"], s["sha256"], s["name"]) for s in (r.get(f"{key}_sidecars") or [])]
+        name = val.rsplit("/", 1)[-1]
+        return cache.fetch_named(val, sha, name, sidecars)
+    return os.path.expanduser(val)
+
+
 def run_variant(variant, input_path=None):
     """Execute a resolved variant on the board and return the verification report."""
     r = variant.run or {}
@@ -61,9 +89,9 @@ def run_variant(variant, input_path=None):
             f"{variant.model}: the run block has no CPU reference (cpu_onnx) and/or input in the "
             f"active registry, so the verification gate can't run. Pass --input, or use a registry "
             f"that carries the reference (registry/index.dev.yaml).")
-    meta = os.path.expanduser(r.get("meta") or "")
-    cpu_onnx = os.path.expanduser(r["cpu_onnx"])
-    inp = os.path.expanduser(input_path or r["input"])
+    meta = _locate_ref(r, "meta") or ""
+    cpu_onnx = _locate_ref(r, "cpu_onnx")
+    inp = _locate_ref(r, "input", override=input_path)
     print("  running on NPU + CPU reference …", flush=True)
     npu_out, cpu_out = mod.run(dev, ctx_board, meta, cpu_onnx, inp)
     return verify.report(npu_out, cpu_out, threshold=float(r.get("threshold", 0.99)))

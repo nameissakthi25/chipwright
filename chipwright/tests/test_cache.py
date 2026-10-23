@@ -97,6 +97,33 @@ def test_fetch_with_correct_sha_stores_and_is_have():
             urllib.request.urlretrieve = orig
 
 
+def test_fetch_named_keeps_filename_and_fetches_sidecar():
+    """A run reference fetches with its ORIGINAL filename (so an ONNX's `.data` sidecar resolves), and
+    declared sidecars land in the same dir."""
+    onnx = b"onnx graph bytes (external-data)"
+    data = b"the external weight data"
+    onnx_sha = hashlib.sha256(onnx).hexdigest()
+    data_sha = hashlib.sha256(data).hexdigest()
+    payloads = {"http://x/m.onnx": onnx, "http://x/m.data": data}
+
+    def _fake(url, filename):
+        with open(filename, "wb") as fh:
+            fh.write(payloads[url])
+        return filename, None
+
+    with _temp_cache():
+        orig = urllib.request.urlretrieve
+        urllib.request.urlretrieve = _fake
+        try:
+            p = cache.fetch_named("http://x/m.onnx", onnx_sha, "m.onnx",
+                                  sidecars=[("http://x/m.data", data_sha, "m.data")])
+            assert os.path.basename(p) == "m.onnx"                 # keeps its name, not the hash
+            assert os.path.exists(os.path.join(os.path.dirname(p), "m.data"))  # sidecar beside it
+            assert cache._sha256(p) == onnx_sha
+        finally:
+            urllib.request.urlretrieve = orig
+
+
 class _temp_cache:
     """Context manager: point cache.CACHE_DIR at a fresh temp dir, restore on exit."""
 

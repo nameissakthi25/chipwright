@@ -87,6 +87,35 @@ def _variant(**kw):
     return Variant(**base)
 
 
+def test_locate_ref_local_path_expands(monkeypatch):
+    """A local run reference is just expanduser'd — unchanged behaviour."""
+    from chipwright import run as runmod
+    got = runmod._locate_ref({"cpu_onnx": "~/x/model.onnx"}, "cpu_onnx")
+    assert got == os.path.expanduser("~/x/model.onnx")
+    assert runmod._locate_ref({}, "meta") is None
+
+
+def test_locate_ref_url_fetches_by_sha(monkeypatch):
+    """A hosted (url) reference is fetched into the cache by its companion sha, keeping its filename."""
+    from chipwright import run as runmod, cache
+    calls = {}
+    monkeypatch.setattr(cache, "fetch_named",
+                        lambda url, sha, name, sidecars: calls.update(url=url, sha=sha, name=name, side=sidecars) or "/c/model.onnx")
+    r = {"cpu_onnx": "https://h/f/model.onnx", "cpu_onnx_sha256": "abc",
+         "cpu_onnx_sidecars": [{"url": "https://h/f/model.data", "sha256": "def", "name": "model.data"}]}
+    got = runmod._locate_ref(r, "cpu_onnx")
+    assert got == "/c/model.onnx"
+    assert calls["url"].endswith("model.onnx") and calls["sha"] == "abc" and calls["name"] == "model.onnx"
+    assert calls["side"] == [("https://h/f/model.data", "def", "model.data")]
+
+
+def test_locate_ref_url_without_sha_refuses_by_name():
+    """A url reference with no sha is refused — never fetch a reference the gate can't verify."""
+    from chipwright import run as runmod
+    with pytest.raises(RuntimeError, match="unverified reference|_sha256"):
+        runmod._locate_ref({"input": "https://h/f/input.npy"}, "input")
+
+
 def test_run_refuses_when_no_artifact(monkeypatch):
     """Refusal path 1 (spec 003 FR-R02 / SC-R03): a record-only variant with no hosted url and no
     local path must refuse by name — pointing at `build` and CW_REGISTRY — not a raw traceback."""
