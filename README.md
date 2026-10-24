@@ -43,9 +43,34 @@ Chipwright closes that gap. Think of it as **PyPI wheel tags for NPUs**: the chi
 
 ## Quickstart
 
+### Offline — no board, in under a minute
+
 ```bash
-pip install -e .
+pip install chipwright
 ```
+
+Resolve a hosted model against a hand-named target. No board, no QAIRT SDK on the machine:
+
+```bash
+chipwright --target htpv68 resolve mobilenet-v2
+```
+
+```text
+model   : mobilenet-v2
+target  : htpv68
+▲ USE (warn)  mobilenet-v2-1.0.0  htpv68/w8a16/img224
+  warning: board QAIRT unknown (offline) — SDK compatibility unverified
+```
+
+That offline-SDK warning is **expected**: with no board to probe, Chipwright confirms the arch/quant/shape match but can't check the exact SDK point, so it says so rather than pretend. Global flags — `--target`, `--registry`, `--quant`, `--shape` — go **before** the subcommand.
+
+The `run` verb and its verification gate need a real board (set `CW_BOARD_HOST` / `CW_BOARD_PASS`, below), and the CV verify demo needs the CPU-reference runner:
+
+```bash
+pip install 'chipwright[cv]'   # onnxruntime + pillow for the ONNX reference
+```
+
+### On a board
 
 Point Chipwright at a board (over SSH) and probe it:
 
@@ -67,32 +92,38 @@ chipwright doctor
 Resolve a model against that exact board — no guessing:
 
 ```bash
-chipwright resolve whisper-small-en
+chipwright resolve mobilenet-v2
 ```
 
 ```text
-model   : whisper-small-en
+model   : mobilenet-v2
 target  : htpv68,qnn2.38
-▲ USE (warn)  whisper-small-en-1.2.0  htpv68/w8a16/win30s
-  warning: artifact tested at qnn2.37.1; board runs 2.38.0 — inside compatible range >=2.34,<2.40
+▲ USE (warn)  mobilenet-v2-1.0.0  htpv68/w8a16/img224
+  warning: board QAIRT 2.38 is in range >=2.34,<2.40 but the artifact was tested at 2.37.1
 ```
 
-Then run it on the board and verify the NPU output against a CPU reference:
+Then run it on the board and verify the NPU output against a CPU reference (the input ships with the variant, so no `--input` is needed):
 
 ```bash
-chipwright run zipformer-enin --input utterance.npy
+chipwright run mobilenet-v2
 ```
 
 ```text
-model   : zipformer-enin
+model   : mobilenet-v2
 target  : htpv68,qnn2.38
-✔ USE    zipformer-enin-7.0.0  htpv68/w8a16/win39  qnn2.37.1  (exact match)
+▲ USE (warn)  mobilenet-v2-1.0.0  htpv68/w8a16/img224
+  pushing artifact to board (mobilenet) …
+  running on NPU + CPU reference …
 
-✔ VERIFIED  NPU vs CPU-reference  cosine_min = 0.98800  (threshold 0.95)
-    encoder: 0.98800
+✔ VERIFIED  NPU vs CPU-reference  cosine_min = 0.95600  (threshold 0.95)
 ```
 
-That `0.98800` is not a claim in a README. It is the number Chipwright measured on a live QCS6490 against an ONNX-Runtime reference, on the input you gave it, this run.
+That `0.95600` is not a claim in a README. It is the number Chipwright measured on a live QCS6490 against an ONNX-Runtime reference, on the input in the variant, this run.
+
+### Targets and registries
+
+- `--target <arch[,sdk]>` — resolve **offline** against a hand-named target instead of a probed board, e.g. `--target htpv68` or `--target htpv68,qnn2.37`. The arch is required; the SDK is optional — omit it and the SDK axis is reported unverified rather than guessed. It is a global flag, so it goes before the subcommand (`chipwright --target htpv68 resolve …`).
+- `CW_REGISTRY` — point the client at an alternate index (a local path or a URL) instead of the public index bundled in the wheel. Use it to resolve/run against a dev or private registry; the author's development overlay is `registry/index.dev.yaml`.
 
 ---
 
@@ -102,7 +133,7 @@ That `0.98800` is not a claim in a README. It is the number Chipwright measured 
 | --- | --- |
 | **resolve** | Match a registry variant to your board's target key. If nothing matches, name the axis that failed — never silently downgrade to a near-miss. |
 | **run** | `resolve` → fetch (or locate) the artifact → push and execute on the board → compare the NPU output to a CPU reference and report the cosine. |
-| **build** | Produce the artifact from a recipe when no hosted variant matches your chip — op pre-check, host preflight, convert → quantize → on-board context, then gate on the verification before publishing. |
+| **build** | Produce the artifact from a recipe when no hosted variant matches your chip — op pre-check, host preflight, convert → quantize → on-board context, then gate on the verification before publishing. *(Specified and partial in 0.2.x — see [Status](#status); not yet a working end-to-end verb.)* |
 
 ---
 
@@ -205,7 +236,9 @@ registry/
   | `movenet` | pose estimation (17 keypoints) | w8a16 | **0.916** |
 
   Two input modalities, five CV tasks, two quant profiles — the quant axis is real, and every run ends in a measured number. The gate earns its keep: a random-noise input to MobileNet correctly **FAILs** at 0.776, and a MediaPipe face detector surfaced a genuine w8a8 fidelity loss on its secondary score head (0.80 vs 0.98 elsewhere) — caught, not shipped. The cosine spread is itself the signal: a ViT depth head converts near-perfectly (0.99996), while a pose keypoint+confidence head shows real quant softness (0.916) yet still clears the bar — the number tells you which is which. Getting that Depth-Anything ViT to convert at all needed a recipe adaptation (an unsupported `Reshape allowzero` attribute, patched across 29 nodes) — the honest boundary, handled rather than papered over.
-- ✅ **build** — **verified end-to-end**: `chipwright build mobilenet-cv` on a real x86_64-linux QAIRT host produced a w8a16 DLC (`…+qnn2.34-htpv68-w8a16-img224.dlc`) via `qairt-converter`, and `chipwright run` then verified that *built* artifact on the board — **cosine 0.956**. The full `resolve → build → run → verify` loop. Op pre-check, host preflight, declared graph adaptations, and a fidelity gate before publish are all in; on a machine without QAIRT the CLI says so plainly instead of pretending.
+
+  **What runs on a clean `pip install`:** `mobilenet-v2` is hosted in the bundled public registry — artifact, CPU reference and input all fetched by hash — so `chipwright run mobilenet-v2` works end-to-end on any board out of the box. The other five rows ship their **verification records** in the public index; their artifacts live in the author's development registry (point at it with `CW_REGISTRY`). The records are what the resolver and `list` surface; the artifacts travel separately.
+- ⚠️ **build** — **specified and partial, not yet end-to-end in 0.2.x.** The `build` verb resolves a model, reports host preflight, and loads the recipe, but on a machine without the QAIRT toolchain it stops plainly — e.g. `chipwright build laya-intent` prints `▲ build host not ready — missing: qairt-converter, qairt-quantizer, qnn-context-binary-generator` and exits on the `preflight` axis instead of pretending. The convert → quantize → on-board-context pipeline, op pre-check, declared graph adaptations and the pre-publish fidelity gate are designed and in the recipes, but building a fresh artifact still requires an x86_64-linux QAIRT host and is not wired as a turnkey command yet. `mobilenet-cv-built` in the registry is the record of one artifact produced this way and then verified on the board (cosine 0.956); reproducing that build from a clean checkout is not a one-liner today. What is solid in 0.2.x is **resolve + run + verify**.
 
 **SDK-range in practice:** that same board runs QAIRT **2.38.0** while the artifact was tested at **2.37.1**, both inside the compatible range `>=2.34,<2.40`. It ran correctly — and `resolve` says so plainly (USE-with-warning), rather than pretending the tested point and the board agree.
 
@@ -229,4 +262,4 @@ The specification lives in a separate repo, the **spec kit** (`chipwright-specki
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Contributions welcome; start with [CONTRIBUTING.md](CONTRIBUTING.md).
+The Chipwright **framework** is MIT — see [LICENSE](LICENSE). The **models** it resolves and runs carry their own upstream licenses, recorded per entry in the registry index (for example the Qualcomm AI Hub CV models are `bsd-3-clause`, Whisper is `mit`, and the LLMs are `apache-2.0`); the MIT license covers this tool, not the model weights. Contributions welcome; start with [CONTRIBUTING.md](CONTRIBUTING.md).
