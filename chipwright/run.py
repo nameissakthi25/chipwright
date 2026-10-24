@@ -46,11 +46,52 @@ def _emit_npu_record(variant, npu_out):
         print(f"        # saved locally: {fn}", flush=True)
 
 
+def run_llamacpp_htp_variant(variant):
+    """The llama.cpp-HTP runtime path (spec 004 FR-RT07) — surface the prereqs, don't fail opaquely.
+
+    This runtime does NOT go through the Genie/QNN device transport. v1 does the honest runnable-today
+    part: fetch + hash-verify the hosted GGUF (proving the artifact is real + intact), then surface the
+    on-device *recipe* (staged glibc loader + ADSP_LIBRARY_PATH + libggml-htp-<arch>.so) and the
+    on-silicon record (`SILICON_RECORD` — dispatch 2.72×, PPL 11.6631). Driving the loader-staging +
+    exec from the CLI is T-RT11; until then `run` names the prereq rather than pretending. A caller gets
+    USE_WITH_WARN: the variant is silicon-verified and fetchable, with the one documented caveat.
+    """
+    from . import cache
+    from .runtimes import llamacpp_htp as lh
+
+    if not variant.url and not variant.local:
+        raise RuntimeError(
+            f"{variant.model} [llamacpp-htp]: this variant carries a silicon record but no GGUF artifact "
+            f"in the active registry (no hosted url, no local path).")
+    if variant.url:
+        art = cache.fetch(variant.url, variant.sha256)   # fetch + sha-verify (refuses on mismatch)
+    else:
+        art = os.path.expanduser(variant.local)
+        if not os.path.exists(art):
+            raise RuntimeError(f"local GGUF not found: {art}")
+    recipe = lh.bench_command(os.path.basename(art), "./pkg-snapdragon/lib", "./glibc238")
+    return {
+        "runtime": "llamacpp-htp",
+        "artifact": art,
+        "artifact_verified": True,
+        "record": lh.SILICON_RECORD,
+        "recipe": recipe,
+        "host_prereqs": list(lh.REQUIRED_LOADER_LIBS),
+        "cli_execution": "recipe",                       # not driven by `run` yet — spec 004 T-RT11
+        "pass": True,                                    # verified on record + artifact integrity ok
+        "warn": ("on-device execution is via the documented llama.cpp-HTP recipe (shown); chipwright-run "
+                 "CLI integration for this runtime is pending (spec 004 T-RT11)"),
+    }
+
+
 def run_variant(variant, input_path=None, emit_record=False):
     """Execute a resolved variant on the board and return the verification report.
 
     `emit_record=True` also captures the on-device output tensor(s) for a reproducible record (FR-RR05).
     """
+    # the llama.cpp-HTP runtime has its own path (no Genie/QNN transport) — handle before the modality logic.
+    if variant.effective_runtime == "llamacpp-htp":
+        return run_llamacpp_htp_variant(variant)
     r = variant.run or {}
     if not r.get("modality"):
         raise RuntimeError(f"variant for {variant.model} has no run block (modality/meta/cpu_onnx)")

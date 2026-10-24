@@ -142,6 +142,50 @@ models:
     sdk_compatible: '>=2.34,<2.40'
     ext: qnnctx
     recipe: recipes/qwen2.5-1.5b/1.0.0.yaml
+  # The llama.cpp-HTP runtime variant — a >4-bit integer route (Q8_0) that classic Genie structurally
+  # lacks. Silicon-verified on v73 (spec 004 Track 2). On-device execution is via the documented
+  # llama.cpp-HTP recipe (staged glibc loader + ADSP_LIBRARY_PATH + libggml-htp-v73.so); chipwright-run
+  # CLI integration for this runtime is pending (T-RT11), so `run` here fetches + hash-verifies the GGUF
+  # and surfaces the recipe + this record (FR-RT07), rather than driving the board itself.
+  - arch: v73
+    quant: Q8_0
+    shape: ctx4096
+    runtime: llamacpp-htp
+    sdk_tested: b3278e921
+    sdk_compatible: llama.cpp-HTP (no QAIRT dependency)
+    ext: gguf
+    url: https://huggingface.co/nameissakthi/chipwright-llm/resolve/main/qwen2.5-1.5b-Q8_0.gguf
+    sha256: cedde4175edae2e9467d8b98d70843e57c8fb101afd54ca773bce022e80f7e4e
+    runtime_support:
+      llamacpp-htp:
+        v68: 'unsupported:needs-v73-or-newer-hexagon'
+        v73: supported
+      genie:
+        v68: supported
+        v73: supported
+    verified:
+      'on': QCS9075 (Dragonwing IQ-9075, soc_id 676, Hexagon v73)
+      date: 2026-10-24
+      loads: true
+      runtime: llamacpp-htp
+      vs_reference:
+        backend: llama.cpp-cpu (same Q8_0 GGUF, GGML_HEXAGON_NDEV=0)
+        metric: dispatch+ppl
+        dispatch:
+          device: HTP0
+          htp0_prefill_tps: 592.82
+          cpu_prefill_tps: 217.55
+          prefill_speedup: 2.72
+          note: Q8_0 MUL_MAT dispatched to HTP0 on the compute-DSP (_dom=cdsp), not CPU fallback (SC-RT03)
+        quality:
+          metric: ppl_wikitext
+          chunks: 16
+          ppl_q8_0: 11.6631
+          ppl_stderr: 0.49427
+          ppl_f16_baseline: 11.6388
+          note: near-lossless vs the model's own f16
+        llamacpp_build: b3278e921
+      note: the >4-bit integer route Genie lacks; on-device exec via the llama.cpp-HTP recipe (CLI integration T-RT11)
 - model: qwen2.5-7b-instruct
   source: Qwen/Qwen2.5-7B-Instruct
   license: apache-2.0

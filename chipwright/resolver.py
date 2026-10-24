@@ -285,6 +285,17 @@ def resolve(target: TargetKey, variants: List[Variant],
 
     built = [v for v in cand if v.has_artifact]
 
+    # The QAIRT SDK range is a genie/QNN concept — a GGUF on the llama.cpp-HTP runtime has no QAIRT
+    # dependency, its "sdk" is the llama.cpp build, which is not comparable to the board's QAIRT. So skip
+    # the QAIRT axis for it: a matching built artifact on this arch is USE (carry any runtime warning).
+    if built and built[0].effective_runtime == "llamacpp-htp":
+        v = built[0]
+        if runtime_warning:
+            return Decision(Outcome.USE_WITH_WARN, variant=v, warning=runtime_warning,
+                            reason=f"artifact matches arch/quant/shape; runtime llamacpp-htp (llama.cpp {v.sdk_tested})")
+        return Decision(Outcome.USE, variant=v,
+                        reason=f"artifact matches arch/quant/shape; runtime llamacpp-htp (llama.cpp {v.sdk_tested})")
+
     # Axis: SDK range. If we don't know the board's QAIRT (offline), we can't check the point —
     # prefer a built artifact and warn that the SDK match is unverified.
     if built:

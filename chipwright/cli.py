@@ -234,7 +234,8 @@ def cmd_resolve(args):
     if args.model not in reg.models():
         return _unknown_model(args, reg)
     target = _get_target(args)
-    d = resolve(target, reg.variants(args.model), args.quant, args.shape)
+    d = resolve(target, reg.variants(args.model), args.quant, args.shape,
+                want_runtime=getattr(args, "runtime", None), priority=getattr(args, "priority", None))
     if getattr(args, "json", False):
         _emit_json(jsonout.decision_to_dict(args.model, target, d))
     else:
@@ -307,6 +308,22 @@ def _render_run_report(rep, d):
     """Print a run's verification report (human door) and return its exit code. Shape-safe: the LLM
     generative gate reports a `tripwire` (token-match), CV/ASR a cosine — the human door must not diverge
     from the already-shape-safe `--json` projection (Principle IV, and never a KeyError traceback)."""
+    if rep.get("runtime") == "llamacpp-htp":     # runtime path: a silicon record + the host recipe (FR-RT07)
+        rec = rep.get("record") or {}
+        d_ = rec.get("dispatch") or {}
+        q_ = rec.get("quality") or {}
+        print(f"\n{GREEN}✔ cached + hash-verified{RST}  {rep.get('artifact')}")
+        print(f"{YELLOW}runtime = llamacpp-htp{RST}  (on-device execution via the recipe below — not the Genie transport)")
+        if d_:
+            print(f"    on-silicon record ({rec.get('board')}, {rec.get('htp_arch')}, {rec.get('date')}): "
+                  f"Q8_0 dispatched to HTP0 — prefill {d_.get('htp0_prefill_tps')} vs CPU "
+                  f"{d_.get('cpu_prefill_tps')} t/s = {d_.get('prefill_speedup')}×")
+        if q_:
+            print(f"    quality: PPL(WikiText) = {q_.get('ppl_wikitext_q8_0')} (near-lossless)")
+        print(f"    recipe: ADSP_LIBRARY_PATH=<lib> " + " ".join(rep.get("recipe") or []))
+        if rep.get("warn"):
+            print(f"{DIM}    note: {rep['warn']}{RST}")
+        return jsonout.EXIT_USE_WITH_WARN
     mark = f"{GREEN}✔ VERIFIED{RST}" if rep["pass"] else f"{RED}✗ MISMATCH{RST}"
     if "tripwire" in rep:                        # LLM generative gate (token-match), not a cosine
         tw = rep["tripwire"]
@@ -332,7 +349,8 @@ def cmd_run(args):
     target = _get_target(args)
     if getattr(args, "json", False):
         return _run_json(args, reg, target)
-    d = resolve(target, reg.variants(args.model), args.quant, args.shape)
+    d = resolve(target, reg.variants(args.model), args.quant, args.shape,
+                want_runtime=getattr(args, "runtime", None), priority=getattr(args, "priority", None))
     _print_decision(args.model, target, d)
     if not d.ok:
         if d.outcome == Outcome.BUILD:
@@ -340,7 +358,9 @@ def cmd_run(args):
         return jsonout.exit_code_for(d)
     # USE / USE_WITH_WARN: execute on the board and verify against a CPU reference.
     v = d.variant
-    if not (v.run and v.run.get("modality")):
+    # the llama.cpp-HTP runtime has its own run path (fetch + silicon record + recipe, FR-RT07) and no
+    # cosine run block — route it through run_variant instead of the no-run-block short-circuit.
+    if not (v.run and v.run.get("modality")) and v.effective_runtime != "llamacpp-htp":
         print(f"{DIM}artifact resolves, but this variant has no run block (modality/meta/cpu_onnx) — "
               f"resolve-only.{RST}")
         if v.url:
@@ -363,13 +383,14 @@ def _run_json(args, reg, target) -> int:
     """
     # Everything human — the decision render and the runner's progress lines — to stderr.
     with contextlib.redirect_stdout(sys.stderr):
-        d = resolve(target, reg.variants(args.model), args.quant, args.shape)
+        d = resolve(target, reg.variants(args.model), args.quant, args.shape,
+                want_runtime=getattr(args, "runtime", None), priority=getattr(args, "priority", None))
         _print_decision(args.model, target, d)
         if not d.ok:
             doc, code = jsonout.decision_to_dict(args.model, target, d), jsonout.exit_code_for(d)
         else:
             v = d.variant
-            if not (v.run and v.run.get("modality")):
+            if not (v.run and v.run.get("modality")) and v.effective_runtime != "llamacpp-htp":
                 print(f"artifact resolves, but this variant has no run block — resolve-only.")
                 doc = jsonout.decision_to_dict(args.model, target, d)
                 doc["verified"] = None
@@ -378,7 +399,10 @@ def _run_json(args, reg, target) -> int:
                 from . import run as runner
                 rep = runner.run_variant(v, args.input)   # may raise → caught by the --json wrapper in main
                 doc = jsonout.run_to_dict(args.model, target, d, rep)
-                code = jsonout.exit_code_for(d) if rep.get("pass") else jsonout.EXIT_VERIFY_MISMATCH
+                if rep.get("runtime") == "llamacpp-htp":
+                    code = jsonout.EXIT_USE_WITH_WARN     # usable, with the documented recipe caveat (FR-RT07)
+                else:
+                    code = jsonout.exit_code_for(d) if rep.get("pass") else jsonout.EXIT_VERIFY_MISMATCH
     _emit_json(doc)
     return code
 
@@ -437,7 +461,8 @@ def cmd_build(args):
     if args.model not in reg.models():
         return _unknown_model(args, reg)
     target = _get_target(args)
-    d = resolve(target, reg.variants(args.model), args.quant, args.shape)
+    d = resolve(target, reg.variants(args.model), args.quant, args.shape,
+                want_runtime=getattr(args, "runtime", None), priority=getattr(args, "priority", None))
     _print_decision(args.model, target, d)
     if d.ok:
         print(f"{DIM}already resolves to USE — nothing to build.{RST}")
@@ -501,6 +526,9 @@ def main(argv=None):
     ap.add_argument("--target", help="offline target, e.g. 'htpv68,qnn2.37'")
     ap.add_argument("--quant", help="narrow to a quant, e.g. w8a16")
     ap.add_argument("--shape", help="narrow to a shape profile, e.g. win30s")
+    ap.add_argument("--runtime", help="pick an inference runtime, e.g. llamacpp-htp (default: the genie floor)")
+    ap.add_argument("--priority", choices=["quality", "decode-latency"],
+                    help="when a model spans runtimes, prefer quality (llamacpp-htp) or decode-latency (genie)")
     ap.add_argument("--json", action="store_true",
                     help="emit one JSON document to stdout (resolve/run/list); human text → stderr, "
                          "always plain. Exit codes follow the table below.")
