@@ -9,12 +9,27 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import time
 
 import numpy as np
+
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _safe_board_name(name):
+    """`board_name` comes from the registry and is interpolated into on-board shell commands (and used
+    as a board path), so it MUST be a plain identifier. A name with a shell metacharacter, space, slash
+    or `..` is refused — otherwise a crafted registry entry could run arbitrary commands as root on the
+    board (`board_name = 'x; curl … | sh'`)."""
+    if not isinstance(name, str) or name in (".", "..") or not _SAFE_NAME.match(name):
+        raise RuntimeError(
+            f"unsafe board_name {name!r}: must match [A-Za-z0-9._-]+ (it is interpolated into on-board "
+            f"shell commands — a separator or shell metacharacter is refused)")
+    return name
 
 
 def _require_sshpass():
@@ -74,6 +89,7 @@ class RemoteQNN:
         into a context binary ON the board (2 MB VTCM) — regenerate, don't ship brittle. A prebuilt
         context binary (`.bin`/`.qnnctx`) is pushed as-is.
         """
+        name = _safe_board_name(name)  # registry-sourced; confine before it reaches any shell string
         self._retry(lambda: _ssh(self.pw, self.port, self.dest, f"mkdir -p {self.board_dir}", timeout=40))
         if local_path.endswith(".dlc"):
             dlc_board = f"{self.board_dir}/{name}"

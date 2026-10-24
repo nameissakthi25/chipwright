@@ -61,7 +61,7 @@ def test_fetch_with_wrong_sha_raises_and_leaves_no_file():
         try:
             raised = False
             try:
-                cache.fetch("http://example.invalid/blob", wrong_sha)
+                cache.fetch("https://example.invalid/blob", wrong_sha)
             except RuntimeError as e:
                 raised = True
                 assert "mismatch" in str(e)
@@ -87,12 +87,12 @@ def test_fetch_with_correct_sha_stores_and_is_have():
         orig = urllib.request.urlretrieve
         urllib.request.urlretrieve = _fake_urlretrieve
         try:
-            path = cache.fetch("http://example.invalid/blob", good_sha)
+            path = cache.fetch("https://example.invalid/blob", good_sha)
             assert path == cache.path_for(good_sha)
             assert os.path.exists(path)
             assert cache.have(good_sha) is True
             # a second fetch is a cache hit (no re-download needed)
-            assert cache.fetch("http://example.invalid/blob", good_sha) == path
+            assert cache.fetch("https://example.invalid/blob", good_sha) == path
         finally:
             urllib.request.urlretrieve = orig
 
@@ -104,7 +104,7 @@ def test_fetch_named_keeps_filename_and_fetches_sidecar():
     data = b"the external weight data"
     onnx_sha = hashlib.sha256(onnx).hexdigest()
     data_sha = hashlib.sha256(data).hexdigest()
-    payloads = {"http://x/m.onnx": onnx, "http://x/m.data": data}
+    payloads = {"https://x/m.onnx": onnx, "https://x/m.data": data}
 
     def _fake(url, filename):
         with open(filename, "wb") as fh:
@@ -115,8 +115,8 @@ def test_fetch_named_keeps_filename_and_fetches_sidecar():
         orig = urllib.request.urlretrieve
         urllib.request.urlretrieve = _fake
         try:
-            p = cache.fetch_named("http://x/m.onnx", onnx_sha, "m.onnx",
-                                  sidecars=[("http://x/m.data", data_sha, "m.data")])
+            p = cache.fetch_named("https://x/m.onnx", onnx_sha, "m.onnx",
+                                  sidecars=[("https://x/m.data", data_sha, "m.data")])
             assert os.path.basename(p) == "m.onnx"                 # keeps its name, not the hash
             assert os.path.exists(os.path.join(os.path.dirname(p), "m.data"))  # sidecar beside it
             assert cache._sha256(p) == onnx_sha

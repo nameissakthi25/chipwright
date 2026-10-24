@@ -22,6 +22,12 @@ DEFAULT_INDEX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
 
 def _load_yaml(src: str) -> dict:
     if src.startswith(("http://", "https://")):
+        # The index is the root of trust — it carries every artifact's sha256 — so a plaintext fetch is
+        # MITM-able (swap the index, swap the shas). Require https unless explicitly opted out.
+        if src.startswith("http://") and os.environ.get("CW_ALLOW_INSECURE") != "1":
+            raise RuntimeError(
+                f"refusing to load the registry index over insecure http ({src}): it carries the shas "
+                f"that pin every artifact (set CW_ALLOW_INSECURE=1 to override)")
         with urllib.request.urlopen(src, timeout=30) as r:
             return yaml.safe_load(r.read())
     with open(src) as f:
