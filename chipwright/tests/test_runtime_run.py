@@ -61,14 +61,15 @@ def test_default_runtime_is_the_genie_floor_not_llamacpp():
 
 
 # --- run (the runtime path) -------------------------------------------------------------------------
-def test_run_variant_routes_llamacpp_htp_to_record_and_recipe(tmp_path):
+def test_run_variant_routes_llamacpp_htp_to_record_and_recipe(tmp_path, monkeypatch):
+    monkeypatch.delenv("CW_BOARD_HOST", raising=False)     # no board → the surface path (record + recipe)
     gguf = tmp_path / "qwen2.5-1.5b-Q8_0.gguf"
     gguf.write_bytes(b"GGUF\x00dummy")
     rep = runner.run_variant(_htp_variant(str(gguf)))
     assert rep["runtime"] == "llamacpp-htp" and rep["pass"] is True
     assert rep["record"]["quality"]["ppl_wikitext_q8_0"] == 11.6631
     assert "--device" in " ".join(rep["recipe"]) and "HTP0" in " ".join(rep["recipe"])
-    assert rep["cli_execution"] == "recipe" and rep.get("warn")
+    assert rep["cli_execution"] == "recipe-or-replay" and rep.get("warn")
 
 
 def test_run_variant_refuses_when_no_artifact():
@@ -92,12 +93,13 @@ def test_human_render_returns_use_with_warn(tmp_path, capsys):
     assert "Traceback" not in out
 
 
-def test_json_projection_carries_runtime_record(tmp_path):
+def test_json_projection_carries_runtime_record(tmp_path, monkeypatch):
     from chipwright.resolver import Decision
+    monkeypatch.delenv("CW_BOARD_HOST", raising=False)     # no board → the surface path
     gguf = tmp_path / "m.gguf"
     gguf.write_bytes(b"GGUF\x00")
     rep = runner.run_variant(_htp_variant(str(gguf)))
     doc = jsonout.run_to_dict("qwen2.5-1.5b-instruct", "v73", Decision(Outcome.USE), rep)
     assert doc["runtime"] == "llamacpp-htp"
     assert doc["record"]["dispatch"]["prefill_speedup"] == 2.72
-    assert any("recipe" in w for w in doc.get("warnings", []))
+    assert any("board" in w for w in doc.get("warnings", []))

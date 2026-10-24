@@ -30,6 +30,7 @@ import numpy as np
 TOKEN_MATCH_MIN = 0.98        # 1a: fraction of greedy tokens that must match the reference
 PPL_DELTA_MAX_PCT = 5.0       # 1c: WikiText perplexity may drift at most +5% vs the artifact's reference
 REFUSAL_RETENTION_MIN = 0.95  # Layer 2: flag (do NOT fail) below this (FR-L11)
+PPL_BACKEND_DELTA_MAX_PCT = 1.0  # llama.cpp-HTP gate: HTP0 vs CPU PPL of the SAME GGUF must match within 1%
 
 
 # --- 1a: greedy token-match (backend isolation) ---------------------------------------------------
@@ -111,6 +112,34 @@ def ppl_delta_pct(npu_ppl: float, ref_ppl: float) -> float:
     if ref_ppl is None or ref_ppl <= 0:
         return 0.0
     return float((npu_ppl - ref_ppl) / ref_ppl * 100.0)
+
+
+# --- llama.cpp-HTP perplexity-agreement gate (runtime axis, spec 004) -----------------------------
+
+def ppl_agreement_gate(ppl_htp, ppl_cpu, ppl_f16=None,
+                       backend_delta_max_pct: float = PPL_BACKEND_DELTA_MAX_PCT) -> dict:
+    """The generative gate for the llama.cpp-HTP runtime: backend isolation by perplexity agreement.
+
+    `llama-cli` wedges the HTP board, so this gate forgoes free-generation token-match and instead runs
+    `llama-perplexity` over the SAME Q8_0 GGUF on HTP0 (`ppl_htp`) and on CPU (`ppl_cpu`, GGML_HEXAGON_NDEV=0).
+    The weights are byte-identical; only the backend differs — so the two perplexities MUST agree. A
+    divergence isolates a CHIP bug (a fast wrong answer), not a lossy quant. `ppl_f16` (the model's own f16
+    baseline) is recorded as the quant cost, never gated. Mirrors `tripwire_report`'s shape: measured
+    numbers, labelled house thresholds, one `pass`. A pass is never reported unless BOTH PPLs were measured.
+    """
+    backend_delta = None if (ppl_htp is None or ppl_cpu is None) else abs(ppl_delta_pct(ppl_htp, ppl_cpu))
+    lossless = None if (ppl_htp is None or ppl_f16 is None) else ppl_delta_pct(ppl_htp, ppl_f16)
+    passes = backend_delta is not None and backend_delta <= backend_delta_max_pct
+    return {
+        "ppl_htp": ppl_htp,
+        "ppl_cpu": ppl_cpu,
+        "ppl_f16_baseline": ppl_f16,
+        "backend_delta_pct": backend_delta,   # |htp - cpu| / cpu * 100 — the gate
+        "lossless_delta_pct": lossless,        # (htp - f16) / f16 * 100 — recorded, not gated
+        # HOUSE RULE (calibrated on silicon), not a universal constant — recorded as such.
+        "thresholds": {"backend_delta_pct": backend_delta_max_pct},
+        "pass": bool(passes),
+    }
 
 
 # --- Layer-1 report -------------------------------------------------------------------------------

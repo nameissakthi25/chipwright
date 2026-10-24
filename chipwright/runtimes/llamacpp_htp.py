@@ -159,6 +159,10 @@ def host_preflight(probe: Dict) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
+def _loader_prefix(lib_dir: str, loader_dir: str) -> List[str]:
+    return [f"{loader_dir}/{LOADER}", "--library-path", f"{loader_dir}:{lib_dir}:/usr/lib:/lib"]
+
+
 def bench_command(gguf: str, lib_dir: str, loader_dir: str, *, device: str = "HTP0",
                   ndev: Optional[int] = None, p: int = 64, n: int = 32, r: int = 2) -> List[str]:
     """The exact loader-injected llama-bench argv proven on silicon. `ndev=0` forces the CPU reference.
@@ -170,9 +174,34 @@ def bench_command(gguf: str, lib_dir: str, loader_dir: str, *, device: str = "HT
     The caller sets ADSP_LIBRARY_PATH and (for CPU) GGML_HEXAGON_NDEV in the environment.
     """
     bin_dir = lib_dir.rsplit("/lib", 1)[0] + "/bin"
-    argv = [f"{loader_dir}/{LOADER}", "--library-path",
-            f"{loader_dir}:{lib_dir}:/usr/lib:/lib", f"{bin_dir}/llama-bench", "-m", gguf]
+    argv = _loader_prefix(lib_dir, loader_dir) + [f"{bin_dir}/llama-bench", "-m", gguf]
     if ndev != 0:
         argv += ["--device", device]
     argv += ["-p", str(p), "-n", str(n), "-r", str(r)]
     return argv
+
+
+def perplexity_command(gguf: str, lib_dir: str, loader_dir: str, corpus: str, *,
+                       device: str = "HTP0", ndev: Optional[int] = None, chunks: int = 16) -> List[str]:
+    """The loader-injected llama-perplexity argv (the generative gate's measurement). `ndev=0` => CPU ref.
+
+    Uses teacher-forced perplexity — NOT `llama-cli` free generation, which wedges the board. `--device
+    HTP0` (default) measures on the NPU; `ndev=0` (GGML_HEXAGON_NDEV=0 in the env) measures the identical
+    GGUF on CPU, so the two perplexities isolate the backend.
+    """
+    bin_dir = lib_dir.rsplit("/lib", 1)[0] + "/bin"
+    argv = _loader_prefix(lib_dir, loader_dir) + [f"{bin_dir}/llama-perplexity",
+                                                  "-m", gguf, "-f", corpus, "--chunks", str(chunks)]
+    if ndev != 0:
+        argv += ["--device", device]
+    return argv
+
+
+_PPL_RE = re.compile(r"Final estimate:\s*PPL\s*=\s*([0-9]+\.[0-9]+)")
+
+
+def ppl_from_stdout(stdout: str) -> Optional[float]:
+    """Parse `Final estimate: PPL = 11.6631` from llama-perplexity output; None if absent (so a crashed or
+    wedged run never reads as a PPL of 0)."""
+    m = _PPL_RE.search(stdout or "")
+    return float(m.group(1)) if m else None

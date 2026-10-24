@@ -100,13 +100,18 @@ def run_to_dict(model: str, target, d: Decision, report: dict) -> dict:
     rec["outputs"] = dict(report.get("per_output") or {})
     if "tripwire" in report:           # LLM path: a generative tripwire, not a cosine
         rec["tripwire"] = report["tripwire"]
-    if report.get("runtime") == "llamacpp-htp":   # runtime path: a silicon record + the host recipe
+    if report.get("runtime") == "llamacpp-htp":   # runtime path: gate verdict (live/replay) or record+recipe
         rec["runtime"] = report["runtime"]
-        rec["record"] = report.get("record")
-        rec["recipe"] = report.get("recipe")
-        rec["cli_execution"] = report.get("cli_execution")
-        if report.get("warn"):
-            rec.setdefault("warnings", []).append(report["warn"])
+        if "gate" in report:                       # the generative gate actually ran
+            rec["gate"] = report["gate"]
+            rec["dispatch"] = report.get("dispatch")
+            rec["mode"] = "live" if report.get("live") else ("replay" if report.get("replay") else None)
+        else:                                      # no board: surfaced the record + recipe
+            rec["record"] = report.get("record")
+            rec["recipe"] = report.get("recipe")
+            rec["cli_execution"] = report.get("cli_execution")
+            if report.get("warn"):
+                rec.setdefault("warnings", []).append(report["warn"])
     return rec
 
 

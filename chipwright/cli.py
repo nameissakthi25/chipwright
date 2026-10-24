@@ -252,7 +252,16 @@ def _replay(reg, model):
     fail / a recomputed≠recorded mismatch / a missing pin.
     """
     from . import replay as rp
+    from . import run as runner
     variants = reg.variants(model)
+    # llama.cpp-HTP generative gate: the pinned quantity is a PPL pair, not an NPU tensor — recompute the
+    # perplexity-agreement verdict offline from the record and render it labelled as a replay.
+    htp = [v for v in variants if v.effective_runtime == "llamacpp-htp"
+           and (((v.verified or {}).get("vs_reference") or {}).get("gate") or {}).get("ppl_htp") is not None]
+    if htp:
+        rep = runner._llamacpp_replay(htp[0])
+        if rep:
+            return _render_run_report(rep, Decision(Outcome.USE))
     cand = [v for v in variants if rp.is_rederivable(v)]
     if not cand:
         print(f"{RED}✗ cannot replay{RST} {model}: no pinned on-device output to replay; this record "
@@ -308,12 +317,25 @@ def _render_run_report(rep, d):
     """Print a run's verification report (human door) and return its exit code. Shape-safe: the LLM
     generative gate reports a `tripwire` (token-match), CV/ASR a cosine — the human door must not diverge
     from the already-shape-safe `--json` projection (Principle IV, and never a KeyError traceback)."""
-    if rep.get("runtime") == "llamacpp-htp":     # runtime path: a silicon record + the host recipe (FR-RT07)
+    if rep.get("runtime") == "llamacpp-htp" and "gate" in rep:   # the generative gate actually ran (live/replay)
+        g = rep["gate"]
+        mark = f"{GREEN}✔ VERIFIED{RST}" if rep["pass"] else f"{RED}✗ MISMATCH{RST}"
+        how = "live on HTP0" if rep.get("live") else "replay (pinned record, no board)"
+        thr = (g.get("thresholds") or {}).get("backend_delta_pct")
+        print(f"\n{mark}  llama.cpp-HTP generative gate — perplexity agreement ({how})")
+        print(f"    PPL  HTP0 = {g.get('ppl_htp')}   CPU = {g.get('ppl_cpu')}   "
+              f"backend Δ = {g.get('backend_delta_pct'):.3f}%  (gate ≤ {thr}%)")
+        if g.get("lossless_delta_pct") is not None:
+            print(f"    quant cost vs f16: {g.get('lossless_delta_pct'):+.3f}%  (recorded, not gated)")
+        if rep.get("dispatch"):
+            print(f"    dispatch: {rep['dispatch'].get('reason')}")
+        return jsonout.exit_code_for(d) if rep["pass"] else jsonout.EXIT_VERIFY_MISMATCH
+    if rep.get("runtime") == "llamacpp-htp":     # no board: surface the record + the host recipe (FR-RT07)
         rec = rep.get("record") or {}
         d_ = rec.get("dispatch") or {}
         q_ = rec.get("quality") or {}
         print(f"\n{GREEN}✔ cached + hash-verified{RST}  {rep.get('artifact')}")
-        print(f"{YELLOW}runtime = llamacpp-htp{RST}  (on-device execution via the recipe below — not the Genie transport)")
+        print(f"{YELLOW}runtime = llamacpp-htp{RST}  (configure a v73 board for the live gate, or --replay offline)")
         if d_:
             print(f"    on-silicon record ({rec.get('board')}, {rec.get('htp_arch')}, {rec.get('date')}): "
                   f"Q8_0 dispatched to HTP0 — prefill {d_.get('htp0_prefill_tps')} vs CPU "

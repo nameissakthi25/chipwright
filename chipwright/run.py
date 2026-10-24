@@ -46,30 +46,79 @@ def _emit_npu_record(variant, npu_out):
         print(f"        # saved locally: {fn}", flush=True)
 
 
-def run_llamacpp_htp_variant(variant):
-    """The llama.cpp-HTP runtime path (spec 004 FR-RT07) — surface the prereqs, don't fail opaquely.
-
-    This runtime does NOT go through the Genie/QNN device transport. v1 does the honest runnable-today
-    part: fetch + hash-verify the hosted GGUF (proving the artifact is real + intact), then surface the
-    on-device *recipe* (staged glibc loader + ADSP_LIBRARY_PATH + libggml-htp-<arch>.so) and the
-    on-silicon record (`SILICON_RECORD` — dispatch 2.72×, PPL 11.6631). Driving the loader-staging +
-    exec from the CLI is T-RT11; until then `run` names the prereq rather than pretending. A caller gets
-    USE_WITH_WARN: the variant is silicon-verified and fetchable, with the one documented caveat.
-    """
+def _llamacpp_artifact(variant):
+    """Fetch+sha-verify (or locate) the GGUF; raise by name if there is none."""
     from . import cache
-    from .runtimes import llamacpp_htp as lh
-
     if not variant.url and not variant.local:
         raise RuntimeError(
             f"{variant.model} [llamacpp-htp]: this variant carries a silicon record but no GGUF artifact "
             f"in the active registry (no hosted url, no local path).")
     if variant.url:
-        art = cache.fetch(variant.url, variant.sha256)   # fetch + sha-verify (refuses on mismatch)
-    else:
-        art = os.path.expanduser(variant.local)
-        if not os.path.exists(art):
-            raise RuntimeError(f"local GGUF not found: {art}")
-    recipe = lh.bench_command(os.path.basename(art), "./pkg-snapdragon/lib", "./glibc238")
+        return cache.fetch(variant.url, variant.sha256)   # fetch + sha-verify (refuses on mismatch)
+    art = os.path.expanduser(variant.local)
+    if not os.path.exists(art):
+        raise RuntimeError(f"local GGUF not found: {art}")
+    return art
+
+
+def _llamacpp_live_gate(variant, art, r):
+    """Drive the generative gate on the board (spec 004 T-RT11 + contracts/llamacpp-htp-gate.md).
+
+    preflight (refuse by name) -> stage pack + GGUF -> prove dispatch (llama-bench HTP0) -> measure
+    perplexity on HTP0 and on CPU (GGML_HEXAGON_NDEV=0) of the SAME GGUF -> ppl-agreement gate. The two
+    perplexities isolate the backend: identical weights, only the compute device differs, so a divergence
+    is a chip bug. `llama-cli` is never run (it wedges the board)."""
+    from . import verify_llm
+    from .device_llamacpp import LlamaHtpBoard
+    from .runtimes import llamacpp_htp as lh
+
+    b = _board_env()
+    dev = LlamaHtpBoard(b["host"], b["user"], b["pw"], b["port"], board_dir=r.get("board_dir", "/data/cw"))
+    ok, why = lh.host_preflight(dev.probe())
+    if not ok:
+        raise RuntimeError(f"{variant.model} [llamacpp-htp]: {why}")
+    if r.get("pack_url"):
+        print("  staging runtime pack …", flush=True)
+        dev.ensure_pack(r["pack_url"], r.get("pack_sha"))
+    name = os.path.basename(art)
+    print("  pushing GGUF + proving dispatch on HTP0 …", flush=True)
+    dev.ensure_gguf(art, name)
+    proof = lh.dispatch_proof(dev.bench(name))
+    if not proof.dispatched:                              # a PPL measured while silently on CPU is not an HTP gate
+        raise RuntimeError(f"{variant.model} [llamacpp-htp]: on-device dispatch not proven — {proof.reason}")
+    chunks = int(r.get("chunks", 16))
+    print(f"  measuring perplexity on HTP0 and CPU ({chunks} chunks) …", flush=True)
+    ppl_htp, _ = dev.perplexity(name, device="HTP0", chunks=chunks)
+    ppl_cpu, _ = dev.perplexity(name, ndev=0, chunks=chunks)
+    gate = verify_llm.ppl_agreement_gate(ppl_htp, ppl_cpu, r.get("ppl_f16_baseline"))
+    return {"runtime": "llamacpp-htp", "gate": gate, "dispatch": proof.as_record(),
+            "pass": bool(gate["pass"] and proof.dispatched), "live": True, "artifact": art}
+
+
+def _llamacpp_replay(variant):
+    """Recompute the ppl-agreement verdict offline from the pinned record (spec 005; no board)."""
+    from . import verify_llm
+    pin = ((variant.verified or {}).get("vs_reference") or {}).get("gate") or {}
+    if pin.get("ppl_htp") is None or pin.get("ppl_cpu") is None:
+        return None
+    gate = verify_llm.ppl_agreement_gate(pin.get("ppl_htp"), pin.get("ppl_cpu"), pin.get("ppl_f16_baseline"))
+    return {"runtime": "llamacpp-htp", "gate": gate, "pass": gate["pass"], "replay": True}
+
+
+def run_llamacpp_htp_variant(variant):
+    """The llama.cpp-HTP runtime path (spec 004 T-RT11, FR-RT07).
+
+    With a board configured (CW_BOARD_HOST/PASS) → drive the live generative gate. Without one → surface
+    the fetch-verified artifact + the recipe + the on-silicon record (and point at `--replay` for the
+    offline gate). Never fakes a gate it did not run."""
+    from .runtimes import llamacpp_htp as lh
+    art = _llamacpp_artifact(variant)
+    r = variant.run or {}
+    b = _board_env()
+    if b["host"] and b["pw"]:
+        return _llamacpp_live_gate(variant, art, r)
+    recipe = lh.perplexity_command(os.path.basename(art), "./pkg-snapdragon/lib", "./glibc238",
+                                   "wikitext-2-raw/wiki.test.raw")
     return {
         "runtime": "llamacpp-htp",
         "artifact": art,
@@ -77,10 +126,11 @@ def run_llamacpp_htp_variant(variant):
         "record": lh.SILICON_RECORD,
         "recipe": recipe,
         "host_prereqs": list(lh.REQUIRED_LOADER_LIBS),
-        "cli_execution": "recipe",                       # not driven by `run` yet — spec 004 T-RT11
-        "pass": True,                                    # verified on record + artifact integrity ok
-        "warn": ("on-device execution is via the documented llama.cpp-HTP recipe (shown); chipwright-run "
-                 "CLI integration for this runtime is pending (spec 004 T-RT11)"),
+        "cli_execution": "recipe-or-replay",
+        "pass": True,                                    # artifact integrity ok + silicon record present
+        "warn": ("no board configured (CW_BOARD_HOST/PASS) — showing the fetch-verified artifact + the "
+                 "on-silicon record. Configure a v73 board to drive the live gate, or `run --replay` to "
+                 "recompute the gate verdict offline from the pinned record."),
     }
 
 

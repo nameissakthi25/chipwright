@@ -23,6 +23,7 @@ SOC_ID = {
     69:  ("QCS8650", "v75"),
     # QDC fleet soc_ids (verified on-device via `chipwright doctor`):
     603: ("QCS8550 / kalama", "v73"),
+    676: ("QCS9075 / Dragonwing IQ-9075", "v73"),  # verified on-silicon 2026-10-24 (libQnnHtpV73Skel + _dom=cdsp)
     660: ("SM8850 / Snapdragon 8 Elite Gen 5", "v81"),
     # Snapdragon 8 Elite (SM8750) — Hexagon v79, the arch the LLM path reaches over adb. The arch is the
     # load-bearing fact (it is what fails at load and the resolver's hard axis); the on-device lib-name
