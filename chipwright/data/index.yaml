@@ -212,11 +212,21 @@ models:
     sdk_tested: 2.37.1
     sdk_compatible: '>=2.34,<2.40'
     ext: dlc
+    url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/quicksrnet-small/quicksrnet_w8a8.dlc
+    sha256: 9ca46d230bd79205f103144df526eeedc47c505b7558d97d157a6ec46f493115
     run:
       modality: cv
       board_name: quicksrnet
       meta: ''
       threshold: 0.9
+      cpu_onnx: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/quicksrnet-small/quicksrnetsmall.onnx
+      cpu_onnx_sha256: 8ef99aecf6ea37c3da18eef6bcac94327cc3ead7069e55743425eb912dc2d941
+      cpu_onnx_sidecars:
+        - url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/quicksrnet-small/quicksrnetsmall.data
+          sha256: e377c1bfc040561b28b4931e7c4b27e6df39d8848addb25ebdeee3071b45dd64
+          name: quicksrnetsmall.data
+      input: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/quicksrnet-small/input.npy
+      input_sha256: 28eb37c45cfcc4c3b8f22e982af24d4df33f2f06ec0701fc535150973fdc5850
     verified:
       'on': QCS6490 (soc_id 498)
       date: 2026-10-09
@@ -240,11 +250,21 @@ models:
     sdk_tested: 2.37.1
     sdk_compatible: '>=2.34,<2.40'
     ext: dlc
+    url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/fcn-resnet50/fcn_w8a8.dlc
+    sha256: 98c0a2700f48f800859972d580b931d058d58a4ae699e1b4612c994fc947c65a
     run:
       modality: cv
       board_name: fcn
       meta: ''
       threshold: 0.9
+      cpu_onnx: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/fcn-resnet50/fcn_resnet50.onnx
+      cpu_onnx_sha256: 05eaf5a4d40915f3681aac3ae7ae0119ba9e8c5e9e753f1f1d9369023762b00f
+      cpu_onnx_sidecars:
+        - url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/fcn-resnet50/fcn_resnet50.data
+          sha256: 95e4a28fc598875a2cd836f96e808441954bea5df942b385e30304564ca8e8e1
+          name: fcn_resnet50.data
+      input: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/fcn-resnet50/input.npy
+      input_sha256: 08f15b114922848ef54c41f6ea240a99ca9a4f5c4708c256065c7f7c437c5b6a
     verified:
       'on': QCS6490 (soc_id 498)
       date: 2026-10-09
@@ -297,11 +317,21 @@ models:
     sdk_tested: 2.37.1
     sdk_compatible: '>=2.34,<2.40'
     ext: dlc
+    url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/depth-anything-v2/depth_w8a16.dlc
+    sha256: 051e9ff31c35cc093fae4601275337d6d3f6dcc7f9d06d3e219e5042c92936e3
     run:
       modality: cv
       board_name: depth
       meta: ''
       threshold: 0.9
+      cpu_onnx: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/depth-anything-v2/depth_anything_v2.onnx
+      cpu_onnx_sha256: 70f3afea5df1a1115f066d75ff40f35c95ec710e6609fb06533dc928f6769696
+      cpu_onnx_sidecars:
+        - url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/depth-anything-v2/depth_anything_v2.data
+          sha256: 1cd4366ce17bae5da226e58a3c0618d22ea128c12831cd6538aebe9fc5a3905d
+          name: depth_anything_v2.data
+      input: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/depth-anything-v2/input.npy
+      input_sha256: 8415c599c901a49cb5e1ad12d594b0d3c8e909af27ba0208183f2d161ff79418
     verified:
       "on": QCS6490 (soc_id 498)
       date: 2026-10-09
@@ -322,11 +352,21 @@ models:
     sdk_tested: 2.37.1
     sdk_compatible: '>=2.34,<2.40'
     ext: dlc
+    url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/movenet/pose_w8a16.dlc
+    sha256: 061187349f6890b9af6445f3bae998570ccfcd6516e93e5c41346b20e62cf33b
     run:
       modality: cv
       board_name: pose
       meta: ''
       threshold: 0.9
+      cpu_onnx: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/movenet/movenet.onnx
+      cpu_onnx_sha256: 77668290aba4913b0ffa58b6b526df2dddb871d695889428295182ca03ebcb0d
+      cpu_onnx_sidecars:
+        - url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/movenet/movenet.data
+          sha256: 0032a7960d9730794c02ea8c7e2ab3483db5f8f9474c0e5c3f5bb4cef6384272
+          name: movenet.data
+      input: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/movenet/input.npy
+      input_sha256: 6fd2bba24a2c5fe0662930ff0cef5472b2fb4bd8a7413853ff40d560bd1689b2
     verified:
       "on": QCS6490 (soc_id 498)
       date: 2026-10-09
