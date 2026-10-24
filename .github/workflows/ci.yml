@@ -25,7 +25,7 @@ jobs:
       - name: Install package and test deps
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e '.[llm]'   # tokenizers/onnxruntime — so the real-library llm tests run (not skip)
           pip install pytest
 
       - name: Run tests
@@ -60,4 +60,6 @@ jobs:
           cd /tmp
           /tmp/cw/bin/chipwright --help
           /tmp/cw/bin/chipwright list
-          /tmp/cw/bin/chipwright --target htpv68,qnn2.38 resolve zipformer-enin
+          # smoke the hosted model: resolves to USE (exit 0). BUILD/FAIL return non-zero by design,
+          # so a build-only model here would fail the step under `bash -e`.
+          /tmp/cw/bin/chipwright --target htpv68,qnn2.38 resolve mobilenet-v2

@@ -7,6 +7,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from chipwright.modalities.llm import (
@@ -109,6 +111,7 @@ def test_retokenize_uses_injected_tokenizer_with_special_tokens_off():
 
 def test_retokenize_with_real_tokenizers_library_roundtrips():
     # Build a tiny real tokenizer.json via the `tokenizers` library and prove the file path loads.
+    pytest.importorskip("tokenizers")  # needs the `llm` extra; skip (not fail) on a minimal install
     from tokenizers import Tokenizer
     from tokenizers.models import WordLevel
     from tokenizers.pre_tokenizers import Whitespace
@@ -123,6 +126,7 @@ def test_retokenize_with_real_tokenizers_library_roundtrips():
 
 
 def test_load_bundle_tokenizer_missing_file_fails_by_name():
+    pytest.importorskip("tokenizers")  # without the lib, load raises the extra-missing RuntimeError first
     try:
         load_bundle_tokenizer("/no/such/tokenizer.json")
     except FileNotFoundError as e:
