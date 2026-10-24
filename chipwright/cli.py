@@ -11,7 +11,9 @@ plainly rather than guessing.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
+import re
 import sys
 
 from . import cache
@@ -20,6 +22,55 @@ from .registry import Registry
 from .resolver import Outcome, resolve
 
 GREEN, YELLOW, RED, DIM, RST = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
+
+# A bare Hexagon arch (what `list` and FAIL messages print, e.g. "v68") looks like a target but is
+# missing the mandatory `htp` prefix. Used to turn a malformed --target into a helpful suggestion.
+_ARCH_LIKE = re.compile(r"^v\d+$", re.IGNORECASE)
+
+# Modality extras → the key top-level imports that must resolve for that verify path to work. The
+# package list behind each extra is in pyproject.toml ([project.optional-dependencies]); here we name
+# the IMPORT each pip package provides (pillow → PIL). `doctor` reports these so a user learns an extra
+# is missing up front, not when a run fails.
+_MODALITY_EXTRAS = {
+    "cv":  ["onnxruntime", "PIL"],          # image classifiers (onnxruntime + pillow)
+    "asr": ["onnxruntime"],                 # streaming encoder/decoder/joiner
+    "tts": ["onnxruntime"],                 # text-to-speech reference
+    "llm": ["onnxruntime", "tokenizers"],   # CPU-reference decoder + genie retokenise
+}
+
+
+def _can_import(module: str) -> bool:
+    """True if `module` is importable — a read-only probe (find_spec, never actually imports)."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:
+        return False
+
+
+def _manual_target(spec: str) -> TargetKey:
+    """Turn --target into a TargetKey, refusing a malformed spec cleanly instead of a traceback.
+
+    The tool prints bare archs (`v68`) in `list` and in FAIL messages, so a user naturally copies
+    `v68` into --target. Rather than crash, we name the axis and — when the token looks like a known
+    arch missing its `htp` prefix — suggest the corrected form. Exits 2, matching `refuse rather than
+    guess`.
+    """
+    try:
+        return TargetKey.manual(spec)
+    except ValueError:
+        suggestion = None
+        for tok in spec.replace(" ", "").split(","):
+            if _ARCH_LIKE.match(tok):
+                suggestion = "htp" + tok.lower()
+                break
+        if suggestion:
+            msg = (f"target {spec!r} — did you mean {suggestion!r}? "
+                   f"(an arch must start with 'htp', e.g. htpv68,qnn2.37)")
+        else:
+            msg = (f"target {spec!r} — expected an arch starting with 'htp', "
+                   f"e.g. htpv68,qnn2.37")
+        print(f"{RED}✗ {msg}{RST}", file=sys.stderr)
+        sys.exit(2)
 
 
 def _board_from(args) -> dict:
@@ -40,28 +91,47 @@ def _get_target(args) -> TargetKey:
             return t
         print(f"{YELLOW}board {b['host']} not reachable{RST}", file=sys.stderr)
     if args.target:
-        return TargetKey.manual(args.target)
+        return _manual_target(args.target)
     print(f"{RED}no board reachable and no --target given{RST}", file=sys.stderr)
     sys.exit(2)
 
 
+def _print_extras_report():
+    """Report, per modality extra, whether its verify-path imports resolve. Read-only and safe with
+    nothing installed: base `pip install chipwright` ships no onnxruntime/pillow/tokenizers, so a user
+    told the product `proves it against a CPU reference` learns here — not mid-run — which extra to add.
+    """
+    print(f"\n{DIM}modality extras (the verify / CPU-reference path needs these){RST}")
+    for extra in ("cv", "asr", "tts", "llm"):
+        mods = _MODALITY_EXTRAS[extra]
+        missing = [m for m in mods if not _can_import(m)]
+        if missing:
+            print(f"  {RED}✗{RST} {extra:3s}  missing {', '.join(missing)}  "
+                  f"— pip install chipwright[{extra}]")
+        else:
+            print(f"  {GREEN}✓{RST} {extra:3s}  installed ({', '.join(mods)})")
+
+
 def cmd_doctor(args):
     b = _board_from(args)
+    rc = 0
     if not (b["host"] and b["pw"]):
         print(f"{YELLOW}no board configured{RST} — set CW_BOARD_HOST / CW_BOARD_PASS (or --host/--pw)")
-        return 0
-    t = probe(b["host"], b["user"], b["pw"], b["port"])
-    if not t.reachable:
-        print(f"{RED}● unreachable{RST}  {b['user']}@{b['host']}:{b['port']}")
-        return 1
-    print(f"{GREEN}● board reachable{RST}  {b['user']}@{b['host']}:{b['port']}")
-    print(f"  SoC         : {t.soc_name or '?'}" + (f" (soc_id {t.soc_id})" if t.soc_id else ""))
-    print(f"  Hexagon arch: {t.htp_arch}")
-    print(f"  QNN libs    : {', '.join(t.qnn_libs) or '(none found)'}")
-    if t.thermal_c is not None:
-        print(f"  temperature : {t.thermal_c} °C")
-    print(f"  target key  : {t}")
-    return 0
+    else:
+        t = probe(b["host"], b["user"], b["pw"], b["port"])
+        if not t.reachable:
+            print(f"{RED}● unreachable{RST}  {b['user']}@{b['host']}:{b['port']}")
+            rc = 1
+        else:
+            print(f"{GREEN}● board reachable{RST}  {b['user']}@{b['host']}:{b['port']}")
+            print(f"  SoC         : {t.soc_name or '?'}" + (f" (soc_id {t.soc_id})" if t.soc_id else ""))
+            print(f"  Hexagon arch: {t.htp_arch}")
+            print(f"  QNN libs    : {', '.join(t.qnn_libs) or '(none found)'}")
+            if t.thermal_c is not None:
+                print(f"  temperature : {t.thermal_c} °C")
+            print(f"  target key  : {t}")
+    _print_extras_report()
+    return rc
 
 
 def _print_decision(model, target, d):
@@ -144,7 +214,7 @@ def cmd_list(args):
         if t.reachable:
             target = t
     if target is None and args.target:
-        target = TargetKey.manual(args.target)
+        target = _manual_target(args.target)
 
     head = f"{target}" if target else "no target — pass --target or configure a board to resolve"
     print(f"{DIM}catalogue · {len(reg.models())} models · {head}{RST}")
