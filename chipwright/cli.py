@@ -329,7 +329,7 @@ def cmd_run(args):
         return jsonout.EXIT_NOT_RUNNABLE
     from . import run as runner
     try:
-        rep = runner.run_variant(v, args.input)
+        rep = runner.run_variant(v, args.input, emit_record=getattr(args, "emit_record", False))
     except Exception as e:
         print(f"{RED}run failed:{RST} {e}")
         return jsonout.EXIT_UNEXPECTED
@@ -496,6 +496,8 @@ def main(argv=None):
     rnp = sub.add_parser("run", help="resolve, fetch, run on the board, verify vs CPU"); rnp.add_argument("model"); rnp.add_argument("--input")
     rnp.add_argument("--replay", action="store_true",
                      help="no board: replay the recorded on-device verification from its pinned tensors")
+    rnp.add_argument("--emit-record", action="store_true",
+                     help="capture the on-device NPU output tensor(s) + print a ready-to-host record fragment (spec 005 FR-RR05)")
     vp = sub.add_parser("verify", help="offline replay of a recorded verification (no board)")
     vp.add_argument("model"); vp.add_argument("--offline", action="store_true",
                                               help="re-derive the recorded result from pinned tensors")

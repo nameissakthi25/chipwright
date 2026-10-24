@@ -198,6 +198,12 @@ models:
         metric: cosine_min
         value: 0.956
         note: real image (ImageNet 'Samoyed'); random-noise input gives 0.776 and the gate correctly FAILs it
+        npu_output:
+          - name: class_logits
+            url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/mobilenet-v2/npu_class_logits.npy
+            sha256: 7064b5bd22d053fdce8d7f602cdafecc30b01944b3a422da9143e0627bafc3a8
+            dtype: float32
+            shape: [1, 1000]
       latency_ms:
         note: single 224x224 image; DLC compiled to context on-board
 - model: quicksrnet-small

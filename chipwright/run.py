@@ -22,8 +22,35 @@ def _board_env():
                 port=int(os.environ.get("CW_BOARD_PORT", 22)))
 
 
-def run_variant(variant, input_path=None):
-    """Execute a resolved variant on the board and return the verification report."""
+def _emit_npu_record(variant, npu_out):
+    """Capture the on-device NPU output tensor(s) this run produced, so the record becomes independently
+    re-derivable offline (spec 005 FR-RR05). Writes each tensor to the cache and prints a ready-to-host
+    `vs_reference.npu_output` fragment (sha256 + dtype + shape per output)."""
+    import hashlib
+    import numpy as np
+    from . import cache
+    d = os.path.join(cache.CACHE_DIR, "records", variant.model)
+    os.makedirs(d, exist_ok=True)
+    print("\n  --- captured NPU output (host these, then paste under the record's vs_reference) ---", flush=True)
+    print("        npu_output:")
+    for name, arr in npu_out.items():
+        a = np.ascontiguousarray(arr)
+        fn = os.path.join(d, f"npu_{name}.npy")
+        np.save(fn, a)
+        sha = hashlib.sha256(open(fn, "rb").read()).hexdigest()
+        print(f"          - name: {name}")
+        print(f"            url: <HOST>/{variant.model}/npu_{name}.npy")
+        print(f"            sha256: {sha}")
+        print(f"            dtype: {a.dtype}")
+        print(f"            shape: {list(a.shape)}")
+        print(f"        # saved locally: {fn}", flush=True)
+
+
+def run_variant(variant, input_path=None, emit_record=False):
+    """Execute a resolved variant on the board and return the verification report.
+
+    `emit_record=True` also captures the on-device output tensor(s) for a reproducible record (FR-RR05).
+    """
     r = variant.run or {}
     if not r.get("modality"):
         raise RuntimeError(f"variant for {variant.model} has no run block (modality/meta/cpu_onnx)")
@@ -67,7 +94,10 @@ def run_variant(variant, input_path=None):
     inp = _locate_ref(r, "input", override=input_path)
     print("  running on NPU + CPU reference …", flush=True)
     npu_out, cpu_out = mod.run(dev, ctx_board, meta, cpu_onnx, inp)
-    return verify.report(npu_out, cpu_out, threshold=float(r.get("threshold", 0.99)))
+    rep = verify.report(npu_out, cpu_out, threshold=float(r.get("threshold", 0.99)))
+    if emit_record:
+        _emit_npu_record(variant, npu_out)
+    return rep
 
 
 def _looks_refused(text: str) -> bool:
