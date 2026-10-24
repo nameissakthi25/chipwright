@@ -125,6 +125,48 @@ That `0.95600` is not a claim in a README. It is the number Chipwright measured 
 - `--target <arch[,sdk]>` — resolve **offline** against a hand-named target instead of a probed board, e.g. `--target htpv68` or `--target htpv68,qnn2.37`. The arch is required; the SDK is optional — omit it and the SDK axis is reported unverified rather than guessed. It is a global flag, so it goes before the subcommand (`chipwright --target htpv68 resolve …`).
 - `CW_REGISTRY` — point the client at an alternate index (a local path or a URL) instead of the public index bundled in the wheel. Use it to resolve/run against a dev or private registry; the author's development overlay is `registry/index.dev.yaml`.
 
+### Machine interface — `--json` and exit codes
+
+Chipwright is meant to be a CI/CD gate, so every outcome is machine-readable. `--json` is a **global flag** (it goes before the subcommand, like `--target`), and it makes `resolve` / `run` / `list` emit **exactly one JSON document to stdout and nothing else** — no colour, no human prose. Any human or progress text goes to **stderr**, so a pipeline can parse stdout cleanly:
+
+```bash
+$ chipwright --target htpv68 --json resolve mobilenet-v2 | jq -e '.outcome'
+"USE_WITH_WARN"
+```
+
+```json
+{
+  "model": "mobilenet-v2", "target": "htpv68", "outcome": "USE_WITH_WARN",
+  "variant": "mobilenet-v2-1.0.0", "arch": "v68", "quant": "w8a16", "shape": "img224",
+  "warnings": ["board QAIRT unknown (offline) — SDK compatibility unverified"],
+  "reason": "artifact matches arch/quant/shape"
+}
+```
+
+`run` adds the verification record, so a deploy can gate on `.verified` without scraping text:
+
+```bash
+$ chipwright --json run mobilenet-v2 | jq '{verified, cosine_min, threshold}'
+{ "verified": true, "cosine_min": 0.95600, "threshold": 0.95 }
+```
+
+The **outcome is data, not a glyph** — on a `FAIL`, the failing `axis` (`htp_arch`, `qairt`, `quant`, …) is a first-class field, not a free-text reason to regex. `list` emits an array of per-variant records. Colour in the human (non-`--json`) output is gated on `stdout.isatty()` and honours `NO_COLOR` (disable) and `FORCE_COLOR=1` (enable); `--json` is always plain.
+
+Each outcome maps to its own **stable, documented exit code** (also in `chipwright --help`), so a gate can branch on the code alone — "build it" vs "never runs here" vs "FAILED the gate" are distinct:
+
+| code | meaning | when |
+| ---: | --- | --- |
+| `0`  | **USE** | exact match — run it |
+| `11` | **USE_WITH_WARN** | a match, but the board's SDK is off the tested point (still in range) |
+| `10` | **BUILD** | no artifact, but a recipe can build one |
+| `20` | **FAIL** | nothing fits — the message names the axis |
+| `30` | **VERIFY_MISMATCH** | ran, but the NPU-vs-CPU cosine fell below threshold |
+| `40` | **NOT_RUNNABLE** | resolved, but cannot execute here (no run block / no board) |
+| `2`  | usage / unknown model | a usage error |
+| `1`  | unexpected error | an internal error (in `--json` mode, still emitted as `{"error":…,"exit_code":1}`) |
+
+The codes are a **versioned contract** (`chipwright.jsonout.__api__`): a code never changes meaning without a MAJOR bump, and new outcomes take new codes. (This replaces the earlier 0/1 collapse, where BUILD, FAIL and a failed verification all exited `1` — the one deliberate behaviour change in this release.)
+
 ---
 
 ## The three verbs

@@ -91,9 +91,12 @@ def test_malformed_target_on_list_also_refuses(registry_path, capsys):
 
 
 def test_valid_target_is_unaffected(registry_path, capsys):
-    """A well-formed --target still resolves normally — the guard only catches the malformed case."""
+    """A well-formed --target still resolves normally — the guard only catches the malformed case.
+
+    The board SDK (2.37) is in range but off the tested point (2.37.1), so this is USE_WITH_WARN → exit
+    11 under the spec-006 exit-code contract (resolution happened; it was not refused)."""
     rc = cli.main(["--registry", registry_path, "--target", "htpv68,qnn2.37", "resolve", "fixture-model"])
-    assert rc == 0
+    assert rc == 11
     out = capsys.readouterr().out
     assert "fixture-model" in out
 

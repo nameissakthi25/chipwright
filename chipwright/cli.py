@@ -11,17 +11,69 @@ plainly rather than guessing.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
+import json
 import os
 import re
 import sys
 
-from . import cache
+from . import cache, jsonout
 from .env import TargetKey, probe
 from .registry import Registry
 from .resolver import Outcome, resolve
 
+# ANSI palette. These are module globals so the whole file can keep printing with them; `_set_palette`
+# blanks them when colour is off (not a TTY / NO_COLOR / --json). The literals below are the coloured
+# default; the actual values for a given invocation are chosen in `main()`.
 GREEN, YELLOW, RED, DIM, RST = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
+
+
+def _color_enabled(json_mode: bool) -> bool:
+    """Should colour be emitted? (spec 006 FR-J05)
+
+    `--json` is always plain. Otherwise honour `NO_COLOR` (set → off, any value, per the no-color.org
+    convention), then `FORCE_COLOR=1` (on), else gate on whether stdout is a real TTY.
+    """
+    if json_mode:
+        return False
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    if os.environ.get("FORCE_COLOR") == "1":
+        return True
+    try:
+        return sys.stdout.isatty()
+    except Exception:
+        return False
+
+
+def _set_palette(enabled: bool):
+    """Point the module colour globals at either the ANSI codes or empty strings."""
+    global GREEN, YELLOW, RED, DIM, RST
+    if enabled:
+        GREEN, YELLOW, RED, DIM, RST = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
+    else:
+        GREEN = YELLOW = RED = DIM = RST = ""
+
+
+def _emit_json(obj):
+    """Write exactly one JSON document to the real stdout, and nothing else (FR-J01).
+
+    `default=str` keeps a verification record portable: YAML parses `date: 2026-10-08` into a
+    `datetime.date`, which `json` can't serialize — stringify such leaves rather than crash.
+    """
+    sys.stdout.write(json.dumps(obj, default=str))
+    sys.stdout.write("\n")
+
+
+def _unknown_model(args, reg) -> int:
+    """Report an unknown model consistently in both modes; exit code 2 (usage/unknown-model)."""
+    if getattr(args, "json", False):
+        _emit_json({"error": f"unknown model '{args.model}'. known: {', '.join(reg.models())}",
+                    "exit_code": jsonout.EXIT_USAGE})
+    else:
+        print(f"{RED}unknown model{RST} '{args.model}'. known: {', '.join(reg.models())}")
+    return jsonout.EXIT_USAGE
 
 # A bare Hexagon arch (what `list` and FAIL messages print, e.g. "v68") looks like a target but is
 # missing the mandatory `htp` prefix. Used to turn a malformed --target into a helpful suggestion.
@@ -161,26 +213,29 @@ def _print_decision(model, target, d):
 def cmd_resolve(args):
     reg = Registry(args.registry)
     if args.model not in reg.models():
-        print(f"{RED}unknown model{RST} '{args.model}'. known: {', '.join(reg.models())}")
-        return 2
+        return _unknown_model(args, reg)
     target = _get_target(args)
     d = resolve(target, reg.variants(args.model), args.quant, args.shape)
-    _print_decision(args.model, target, d)
-    return 0 if d.ok else 1
+    if getattr(args, "json", False):
+        _emit_json(jsonout.decision_to_dict(args.model, target, d))
+    else:
+        _print_decision(args.model, target, d)
+    return jsonout.exit_code_for(d)
 
 
 def cmd_run(args):
     reg = Registry(args.registry)
     if args.model not in reg.models():
-        print(f"{RED}unknown model{RST} '{args.model}'. known: {', '.join(reg.models())}")
-        return 2
+        return _unknown_model(args, reg)
     target = _get_target(args)
+    if getattr(args, "json", False):
+        return _run_json(args, reg, target)
     d = resolve(target, reg.variants(args.model), args.quant, args.shape)
     _print_decision(args.model, target, d)
     if not d.ok:
         if d.outcome == Outcome.BUILD:
             print(f"{DIM}milestone 1 is resolve-only — building is out of scope; stopping.{RST}")
-        return 1
+        return jsonout.exit_code_for(d)
     # USE / USE_WITH_WARN: execute on the board and verify against a CPU reference.
     v = d.variant
     if not (v.run and v.run.get("modality")):
@@ -189,19 +244,46 @@ def cmd_run(args):
         if v.url:
             print(f"fetching → cache ({cache.CACHE_DIR}) …")
             print(f"{GREEN}✔ cached + hash-verified{RST}  {cache.fetch(v.url, v.sha256)}")
-        return 0
+        return jsonout.EXIT_NOT_RUNNABLE
     from . import run as runner
     try:
         rep = runner.run_variant(v, args.input)
     except Exception as e:
         print(f"{RED}run failed:{RST} {e}")
-        return 1
+        return jsonout.EXIT_UNEXPECTED
     mark = f"{GREEN}✔ VERIFIED{RST}" if rep["pass"] else f"{RED}✗ MISMATCH{RST}"
     print(f"\n{mark}  NPU vs CPU-reference  cosine_min = {rep['cosine_min']:.5f}  "
           f"(threshold {rep['threshold']})")
     for name, c in rep["per_output"].items():
         print(f"    {name}: {c:.5f}")
-    return 0 if rep["pass"] else 1
+    return jsonout.exit_code_for(d) if rep["pass"] else jsonout.EXIT_VERIFY_MISMATCH
+
+
+def _run_json(args, reg, target) -> int:
+    """`run` in `--json` mode: all human/progress text (including the device runner's own prints) goes to
+    stderr, then exactly one JSON document goes to stdout. The resolve/run/verify logic is untouched —
+    this only redirects the human stream and projects the result (Principle IV).
+    """
+    # Everything human — the decision render and the runner's progress lines — to stderr.
+    with contextlib.redirect_stdout(sys.stderr):
+        d = resolve(target, reg.variants(args.model), args.quant, args.shape)
+        _print_decision(args.model, target, d)
+        if not d.ok:
+            doc, code = jsonout.decision_to_dict(args.model, target, d), jsonout.exit_code_for(d)
+        else:
+            v = d.variant
+            if not (v.run and v.run.get("modality")):
+                print(f"artifact resolves, but this variant has no run block — resolve-only.")
+                doc = jsonout.decision_to_dict(args.model, target, d)
+                doc["verified"] = None
+                code = jsonout.EXIT_NOT_RUNNABLE
+            else:
+                from . import run as runner
+                rep = runner.run_variant(v, args.input)   # may raise → caught by the --json wrapper in main
+                doc = jsonout.run_to_dict(args.model, target, d, rep)
+                code = jsonout.exit_code_for(d) if rep.get("pass") else jsonout.EXIT_VERIFY_MISMATCH
+    _emit_json(doc)
+    return code
 
 
 def cmd_list(args):
@@ -215,6 +297,10 @@ def cmd_list(args):
             target = t
     if target is None and args.target:
         target = _manual_target(args.target)
+
+    if getattr(args, "json", False):
+        _emit_json(jsonout.list_to_dict(reg, target))
+        return 0
 
     head = f"{target}" if target else "no target — pass --target or configure a board to resolve"
     print(f"{DIM}catalogue · {len(reg.models())} models · {head}{RST}")
@@ -245,16 +331,15 @@ def cmd_build(args):
     import os
     reg = Registry(args.registry)
     if args.model not in reg.models():
-        print(f"{RED}unknown model{RST} '{args.model}'. known: {', '.join(reg.models())}")
-        return 2
+        return _unknown_model(args, reg)
     target = _get_target(args)
     d = resolve(target, reg.variants(args.model), args.quant, args.shape)
     _print_decision(args.model, target, d)
     if d.ok:
         print(f"{DIM}already resolves to USE — nothing to build.{RST}")
-        return 0
+        return jsonout.exit_code_for(d)
     if d.outcome != Outcome.BUILD:
-        return 1
+        return jsonout.exit_code_for(d)
     v = d.variant
     from . import config, build as builder, errors, recipe as recipe_mod
 
@@ -290,13 +375,31 @@ def cmd_build(args):
     return 1
 
 
+# The outcome→exit-code contract, shown in `--help` so a pipeline author can read it without the README
+# (spec 006 FR-J04). Kept in lockstep with chipwright.jsonout (the single source of the numbers).
+_EXIT_CODE_HELP = f"""exit codes (stable contract, chipwright.jsonout.__api__={jsonout.__api__}):
+  {jsonout.EXIT_USE:<3} USE               exact match — run it
+  {jsonout.EXIT_USE_WITH_WARN:<3} USE_WITH_WARN     in range, outside the tested SDK point
+  {jsonout.EXIT_BUILD:<3} BUILD             no artifact, but a recipe can build one
+  {jsonout.EXIT_FAIL:<3} FAIL              nothing fits — the message names the axis
+  {jsonout.EXIT_VERIFY_MISMATCH:<3} VERIFY_MISMATCH   ran, but the NPU vs CPU cosine fell below threshold
+  {jsonout.EXIT_NOT_RUNNABLE:<3} NOT_RUNNABLE      resolved, but cannot execute here (no run block / no board)
+  {jsonout.EXIT_USAGE:<3} usage             usage error / unknown model
+  {jsonout.EXIT_UNEXPECTED:<3} unexpected        an unexpected internal error
+"""
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="chipwright", description="Chipwright — package manager for Qualcomm NPUs")
+    ap = argparse.ArgumentParser(prog="chipwright", description="Chipwright — package manager for Qualcomm NPUs",
+                                 epilog=_EXIT_CODE_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--registry", default=None, help="index path/URL (default: bundled registry)")
     ap.add_argument("--host"); ap.add_argument("--user"); ap.add_argument("--pw"); ap.add_argument("--port")
     ap.add_argument("--target", help="offline target, e.g. 'htpv68,qnn2.37'")
     ap.add_argument("--quant", help="narrow to a quant, e.g. w8a16")
     ap.add_argument("--shape", help="narrow to a shape profile, e.g. win30s")
+    ap.add_argument("--json", action="store_true",
+                    help="emit one JSON document to stdout (resolve/run/list); human text → stderr, "
+                         "always plain. Exit codes follow the table below.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor", help="probe the board")
     sub.add_parser("list", help="browse the catalogue (with resolve outcome for your board)")
@@ -304,8 +407,20 @@ def main(argv=None):
     rnp = sub.add_parser("run", help="resolve, fetch, run on the board, verify vs CPU"); rnp.add_argument("model"); rnp.add_argument("--input")
     bp = sub.add_parser("build", help="resolve; when it misses, build from a recipe"); bp.add_argument("model")
     args = ap.parse_args(argv)
-    return {"doctor": cmd_doctor, "list": cmd_list, "resolve": cmd_resolve,
-            "run": cmd_run, "build": cmd_build}[args.cmd](args)
+    _set_palette(_color_enabled(args.json))
+    handler = {"doctor": cmd_doctor, "list": cmd_list, "resolve": cmd_resolve,
+               "run": cmd_run, "build": cmd_build}[args.cmd]
+    # In --json mode, an unexpected internal error must still leave exactly one JSON document on stdout
+    # (never a half-line a parser chokes on) and exit 1 (FR-J01, edge case).
+    if args.json and args.cmd in ("resolve", "run", "list"):
+        try:
+            return handler(args)
+        except SystemExit:
+            raise                       # clean usage refusals (exit 2) keep stdout empty — fine for a parser
+        except Exception as e:
+            _emit_json({"error": str(e), "exit_code": jsonout.EXIT_UNEXPECTED})
+            return jsonout.EXIT_UNEXPECTED
+    return handler(args)
 
 
 if __name__ == "__main__":
