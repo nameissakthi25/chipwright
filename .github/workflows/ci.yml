@@ -60,6 +60,10 @@ jobs:
           cd /tmp
           /tmp/cw/bin/chipwright --help
           /tmp/cw/bin/chipwright list
-          # smoke the hosted model: resolves to USE (exit 0). BUILD/FAIL return non-zero by design,
-          # so a build-only model here would fail the step under `bash -e`.
-          /tmp/cw/bin/chipwright --target htpv68,qnn2.38 resolve mobilenet-v2
+          # smoke the hosted model. Per the spec-006 exit-code contract an offline resolve is
+          # USE_WITH_WARN=11 (board QAIRT unknown), a clean USE is 0 — accept either; any other
+          # code (BUILD=10 / FAIL=20 / usage=2) still fails the step.
+          /tmp/cw/bin/chipwright --target htpv68,qnn2.38 resolve mobilenet-v2 || { rc=$?; [ "$rc" = 11 ] || exit "$rc"; }
+          # and assert the machine interface is parseable JSON with the right outcome
+          /tmp/cw/bin/chipwright --json --target htpv68,qnn2.38 resolve mobilenet-v2 \
+            | python -c "import sys,json; d=json.load(sys.stdin); assert d['outcome'] in ('USE','USE_WITH_WARN'), d; print('json ok:', d['outcome'])"
