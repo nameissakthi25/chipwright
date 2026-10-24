@@ -303,6 +303,26 @@ def cmd_verify(args):
     return _replay(reg, args.model)
 
 
+def _render_run_report(rep, d):
+    """Print a run's verification report (human door) and return its exit code. Shape-safe: the LLM
+    generative gate reports a `tripwire` (token-match), CV/ASR a cosine — the human door must not diverge
+    from the already-shape-safe `--json` projection (Principle IV, and never a KeyError traceback)."""
+    mark = f"{GREEN}✔ VERIFIED{RST}" if rep["pass"] else f"{RED}✗ MISMATCH{RST}"
+    if "tripwire" in rep:                        # LLM generative gate (token-match), not a cosine
+        tw = rep["tripwire"]
+        thr = (tw.get("thresholds") or {}).get("token_match")
+        print(f"\n{mark}  generative gate  token_match = {float(tw.get('token_match', 0.0)):.5f}"
+              + (f"  (threshold {thr})" if thr is not None else ""))
+        if rep.get("behavior"):
+            print(f"    behavioral probe: {rep['behavior']}")
+    else:
+        print(f"\n{mark}  NPU vs CPU-reference  cosine_min = {rep['cosine_min']:.5f}  "
+              f"(threshold {rep['threshold']})")
+        for name, c in rep["per_output"].items():
+            print(f"    {name}: {c:.5f}")
+    return jsonout.exit_code_for(d) if rep["pass"] else jsonout.EXIT_VERIFY_MISMATCH
+
+
 def cmd_run(args):
     reg = Registry(args.registry)
     if args.model not in reg.models():
@@ -333,12 +353,7 @@ def cmd_run(args):
     except Exception as e:
         print(f"{RED}run failed:{RST} {e}")
         return jsonout.EXIT_UNEXPECTED
-    mark = f"{GREEN}✔ VERIFIED{RST}" if rep["pass"] else f"{RED}✗ MISMATCH{RST}"
-    print(f"\n{mark}  NPU vs CPU-reference  cosine_min = {rep['cosine_min']:.5f}  "
-          f"(threshold {rep['threshold']})")
-    for name, c in rep["per_output"].items():
-        print(f"    {name}: {c:.5f}")
-    return jsonout.exit_code_for(d) if rep["pass"] else jsonout.EXIT_VERIFY_MISMATCH
+    return _render_run_report(rep, d)
 
 
 def _run_json(args, reg, target) -> int:

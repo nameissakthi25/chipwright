@@ -58,6 +58,7 @@ class Registry:
                     local=v.get("local"), run=v.get("run"),
                     recipe=v.get("recipe"), verified=v.get("verified"),
                     runtime=v.get("runtime"), runtime_support=v.get("runtime_support"),
+                    precision_support=v.get("precision_support"),
                 ))
             self._models[model] = vs
 
