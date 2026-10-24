@@ -109,3 +109,34 @@ def fetch_named(url: str, sha256: str, name: str, sidecars=None) -> str:
         _require_sha(s_sha, "reference sidecar")
         _ensure(s_url, s_sha, os.path.join(d, _safe_name(s_name)))
     return main
+
+
+def _looks_url(s) -> bool:
+    return isinstance(s, str) and s.startswith(("http://", "https://"))
+
+
+def locate_ref(r: dict, key: str, override=None):
+    """Locate a run-block reference (cpu_onnx / input / meta): a local path, or a HOSTED url fetched into
+    the cache so a stranger's `run` works, not only the author's.
+
+    A url value is sha-verified via a companion `<key>_sha256` (refusing by name if absent — never an
+    unverified reference) and fetched with its original filename so an ONNX's external-data sidecar
+    resolves; declare sidecars under `<key>_sidecars: [{url, sha256, name}]`.
+
+    Lives here (device-free) rather than in `run.py` so both the live gate (`run.run_variant`) and the
+    offline replay (`replay.rederive`) share one reference locator without either importing the board
+    transport. `run._locate_ref` is an alias of this.
+    """
+    val = override if override is not None else r.get(key)
+    if val is None:
+        return None
+    if _looks_url(val):
+        sha = r.get(f"{key}_sha256")
+        if not sha:
+            raise RuntimeError(
+                f"run block {key} is a url but carries no {key}_sha256 — refusing to fetch an unverified "
+                f"reference (a reference the gate can't trust is worse than none).")
+        sidecars = [(s["url"], s["sha256"], s["name"]) for s in (r.get(f"{key}_sidecars") or [])]
+        name = val.rsplit("/", 1)[-1]
+        return fetch_named(val, sha, name, sidecars)
+    return os.path.expanduser(val)

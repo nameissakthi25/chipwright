@@ -186,6 +186,19 @@ def cmd_doctor(args):
     return rc
 
 
+def _rederivable_note(v):
+    """A small, non-breaking annotation (spec 005 FR-RR04): is this record's headline number
+    independently re-derivable offline (NPU output pinned), or does it predate reproducible-record?
+    Returns a colored line, or None when the variant carries no verification record at all.
+    """
+    from . import replay
+    if not isinstance(v.verified, dict) or not isinstance(v.verified.get("vs_reference"), dict):
+        return None
+    if replay.is_rederivable(v):
+        return f"{GREEN}↺ independently re-derivable{RST} — chipwright run {v.model} --replay"
+    return f"{DIM}not independently re-derivable yet (record predates reproducible-record){RST}"
+
+
 def _print_decision(model, target, d):
     print(f"model   : {model}")
     print(f"target  : {target}")
@@ -195,6 +208,9 @@ def _print_decision(model, target, d):
               f"qnn{v.sdk_tested}  ({d.reason})")
         if v.verified:
             print(f"  {DIM}verified: {v.verified}{RST}")
+            note = _rederivable_note(v)
+            if note:
+                print(f"  {note}")
     elif d.outcome == Outcome.USE_WITH_WARN:
         v = d.variant
         print(f"{YELLOW}▲ USE (warn){RST}  {v.model}-{v.version}  htp{v.arch}/{v.quant}/{v.shape}")
@@ -205,6 +221,9 @@ def _print_decision(model, target, d):
         print(f"  {DIM}{d.reason}{RST}")
         if v.verified:
             print(f"  {DIM}prior verification on record: {v.verified}{RST}")
+            note = _rederivable_note(v)
+            if note:
+                print(f"  {note}")
     else:
         print(f"{RED}✗ FAIL{RST}  axis={d.axis}: {d.reason}")
     return d
@@ -223,10 +242,73 @@ def cmd_resolve(args):
     return jsonout.exit_code_for(d)
 
 
+def _replay(reg, model):
+    """Offline replay of a recorded on-device verification (spec 005 US2 / FR-RR03).
+
+    Picks a variant whose record pins the NPU output, re-derives the cosine from the pinned operands with
+    the shared gate, and prints the result LABELLED as a replay of the recorded result (board + date) —
+    never as a fresh on-silicon verification (Principle I). Exits 0 on a reproduced pass, non-zero on a
+    fail / a recomputed≠recorded mismatch / a missing pin.
+    """
+    from . import replay as rp
+    variants = reg.variants(model)
+    cand = [v for v in variants if rp.is_rederivable(v)]
+    if not cand:
+        print(f"{RED}✗ cannot replay{RST} {model}: no pinned on-device output to replay; this record "
+              f"predates reproducible-record or was not captured.")
+        # a record exists but was never captured for replay — point at the live gate as the way to verify.
+        if any(v.verified for v in variants):
+            print(f"  {DIM}the recorded number is still shown by `chipwright list` / `resolve`; to get a "
+                  f"fresh VERIFIED line, run it on a board (chipwright run {model}).{RST}")
+        return 2
+
+    v = cand[0]
+    try:
+        res = rp.rederive(v)
+    except Exception as e:
+        print(f"{RED}✗ replay failed:{RST} {e}")
+        return 1
+
+    rec = v.verified or {}
+    board = rec.get("on", "?")
+    date = rec.get("date", "?")
+    cmin = res["cosine_min"]
+    tag = f"{DIM}↺ REPLAY{RST} (recorded on {board}, {date})"
+
+    if not res["matches"]:
+        # recomputed ≠ recorded → refuse, never silently pass (FR-RR04 / Principle II).
+        print(f"{tag}  recomputed cosine_min={cmin:.5f} {RED}≠{RST} recorded {res['recorded']} "
+              f"(±{rp.TOLERANCE})  {RED}✗ REFUSING — record not reproducible{RST}")
+        return 1
+    if res["pass"]:
+        print(f"{tag}  cosine_min={cmin:.5f}  {GREEN}VERIFIED{RST}")
+        for name, c in res["outputs"].items():
+            print(f"    {name}: {c:.5f}")
+        return 0
+    # reproduced faithfully, but the recorded number is itself below threshold → a recorded FAIL.
+    print(f"{tag}  cosine_min={cmin:.5f}  {RED}FAILED{RST} (threshold {res['threshold']})")
+    return 1
+
+
+def cmd_verify(args):
+    """`chipwright verify <model> --offline` — the replay under its own verb (spec 005 US2)."""
+    reg = Registry(args.registry)
+    if args.model not in reg.models():
+        print(f"{RED}unknown model{RST} '{args.model}'. known: {', '.join(reg.models())}")
+        return 2
+    if not getattr(args, "offline", False):
+        print(f"{YELLOW}verify currently supports only offline replay{RST} — pass --offline "
+              f"(a live on-device verify is `chipwright run {args.model}`).")
+        return 2
+    return _replay(reg, args.model)
+
+
 def cmd_run(args):
     reg = Registry(args.registry)
     if args.model not in reg.models():
         return _unknown_model(args, reg)
+    if getattr(args, "replay", False):
+        return _replay(reg, args.model)
     target = _get_target(args)
     if getattr(args, "json", False):
         return _run_json(args, reg, target)
@@ -306,6 +388,7 @@ def cmd_list(args):
     print(f"{DIM}catalogue · {len(reg.models())} models · {head}{RST}")
     badge = {Outcome.USE: f"{GREEN}USE{RST}", Outcome.USE_WITH_WARN: f"{YELLOW}USE*{RST}",
              Outcome.BUILD: f"{YELLOW}BUILD{RST}", Outcome.FAIL: f"{RED}FAIL{RST}"}
+    from . import replay as rp
     for m in reg.models():
         vs = reg.variants(m)
         archs = ",".join(sorted({v.arch for v in vs}))
@@ -316,13 +399,19 @@ def cmd_list(args):
             out = badge.get(d.outcome, "")
             if d.outcome == Outcome.FAIL and d.axis:
                 out += f"{DIM}({d.axis}){RST}"
-        rec = next((v.verified for v in vs if v.verified), None)
+        rec_v = next((v for v in vs if v.verified), None)
+        rec = rec_v.verified if rec_v else None
         vr = ""
         if rec and isinstance(rec.get("vs_reference"), dict):
             val = rec["vs_reference"].get("value")
             met = rec["vs_reference"].get("metric", "")
             if val is not None:
                 vr = f"{DIM}{met}={val}{RST}"
+            # annotate re-derivability (spec 005 FR-RR04) — a small, non-breaking tag.
+            if rp.is_rederivable(rec_v):
+                vr += f" {GREEN}↺replay{RST}"
+            else:
+                vr += f" {DIM}(not independently re-derivable yet){RST}"
         print(f"  {m:20s} {archs:9s} {quants:9s} {out:16s} {vr}")
     return 0
 
@@ -405,11 +494,16 @@ def main(argv=None):
     sub.add_parser("list", help="browse the catalogue (with resolve outcome for your board)")
     rp = sub.add_parser("resolve", help="resolve a model against the board"); rp.add_argument("model")
     rnp = sub.add_parser("run", help="resolve, fetch, run on the board, verify vs CPU"); rnp.add_argument("model"); rnp.add_argument("--input")
+    rnp.add_argument("--replay", action="store_true",
+                     help="no board: replay the recorded on-device verification from its pinned tensors")
+    vp = sub.add_parser("verify", help="offline replay of a recorded verification (no board)")
+    vp.add_argument("model"); vp.add_argument("--offline", action="store_true",
+                                              help="re-derive the recorded result from pinned tensors")
     bp = sub.add_parser("build", help="resolve; when it misses, build from a recipe"); bp.add_argument("model")
     args = ap.parse_args(argv)
     _set_palette(_color_enabled(args.json))
     handler = {"doctor": cmd_doctor, "list": cmd_list, "resolve": cmd_resolve,
-               "run": cmd_run, "build": cmd_build}[args.cmd]
+               "run": cmd_run, "verify": cmd_verify, "build": cmd_build}[args.cmd]
     # In --json mode, an unexpected internal error must still leave exactly one JSON document on stdout
     # (never a half-line a parser chokes on) and exit 1 (FR-J01, edge case).
     if args.json and args.cmd in ("resolve", "run", "list"):
