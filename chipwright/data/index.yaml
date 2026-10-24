@@ -174,11 +174,21 @@ models:
     sdk_tested: 2.37.1
     sdk_compatible: '>=2.34,<2.40'
     ext: dlc
+    url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/mobilenet-v2/mobilenet_w8a16.dlc
+    sha256: 674e275ab45e27d90f0493216717f8fae4de4a864b0ff463573a2bbe7b01cff3
     run:
       modality: cv
       board_name: mobilenet
       meta: ''
       threshold: 0.95
+      cpu_onnx: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/mobilenet-v2/mobilenet_v2.onnx
+      cpu_onnx_sha256: 8d0b30c659317596eedd46e30b65eac658a293c181bc0d8dff27c5d29ae5f284
+      cpu_onnx_sidecars:
+        - url: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/mobilenet-v2/mobilenet_v2.data
+          sha256: da61b048c0d696bb8bc0260e644f71f998c6c5b203746258d1e7fc41b329a36f
+          name: mobilenet_v2.data
+      input: https://huggingface.co/nameissakthi/chipwright-cv/resolve/main/mobilenet-v2/input.npy
+      input_sha256: 93f8247982c540dc1bda3942ec3671cefef9a26921221e53aba0da9fba6918f2
     verified:
       'on': QCS6490 (soc_id 498)
       date: 2026-10-09
