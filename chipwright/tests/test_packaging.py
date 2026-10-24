@@ -137,7 +137,7 @@ def test_run_refuses_when_no_cpu_reference(monkeypatch, tmp_path):
         def __init__(self, *a, **k):
             pass
 
-        def ensure_ctx(self, _art, _name):
+        def ensure_ctx(self, _art, _name, ext=None):
             return "/board/ctx"
 
     monkeypatch.setattr(runmod, "_board_env",

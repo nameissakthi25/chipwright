@@ -81,7 +81,7 @@ def run_variant(variant, input_path=None):
 
     board_name = r.get("board_name", os.path.basename(art))
     print(f"  pushing artifact to board ({board_name}) …", flush=True)
-    ctx_board = dev.ensure_ctx(art, board_name)
+    ctx_board = dev.ensure_ctx(art, board_name, ext=variant.ext)
 
     mod = importlib.import_module(f".modalities.{r['modality']}", __package__)
     if not r.get("cpu_onnx") or not (input_path or r.get("input")):

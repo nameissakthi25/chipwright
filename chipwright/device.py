@@ -82,16 +82,23 @@ class RemoteQNN:
             time.sleep(wait)
         return last
 
-    def ensure_ctx(self, local_path, name):
+    def ensure_ctx(self, local_path, name, ext=None):
         """Push an artifact to the board and return a runnable context-binary path (cached).
 
         A DLC is the durable artifact; the HTP context binary is per-target, so a `.dlc` is compiled
         into a context binary ON the board (2 MB VTCM) — regenerate, don't ship brittle. A prebuilt
         context binary (`.bin`/`.qnnctx`) is pushed as-is.
+
+        `ext` is the registry-declared artifact kind ("dlc"/"bin"/…). It is authoritative: a hosted
+        artifact is fetched into the content-addressed cache under a HASHED filename with no extension,
+        so inferring "is this a DLC?" from `local_path` wrongly treats a fetched DLC as a prebuilt
+        context binary (skips context-gen → "Could not create context from binary" on-device). When
+        `ext` is given we trust it; only when it is absent do we fall back to the filename suffix.
         """
         name = _safe_board_name(name)  # registry-sourced; confine before it reaches any shell string
         self._retry(lambda: _ssh(self.pw, self.port, self.dest, f"mkdir -p {self.board_dir}", timeout=40))
-        if local_path.endswith(".dlc"):
+        is_dlc = (ext == "dlc") if ext is not None else local_path.endswith(".dlc")
+        if is_dlc:
             dlc_board = f"{self.board_dir}/{name}"
             ctx_board = f"{self.board_dir}/ctx_{name}/{name}_ctx.bin"
             present = _ssh(self.pw, self.port, self.dest, f"test -f {ctx_board} && echo OK", timeout=40)
