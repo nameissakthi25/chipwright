@@ -23,6 +23,13 @@ RUNS_ON = ("npu", "host")
 # through to the resolver's refusal verbatim.
 _PRECISION_KINDS = ("supported", "blocked", "unsupported")
 
+# Runtime-support statuses a recipe may declare (spec 004, FR-RT04). The runtime axis is the precision
+# axis a second time — the same {key: "supported" | "<kind>:<reason>"} matrix the resolver already refuses
+# on — only one level deeper, because a runtime's support is *per arch*: `{runtime: {arch: status}}`. A
+# status is the bare word "supported", or "deprecated:<successor>" (runnable, but deprecating upstream —
+# resolve warns), or "unsupported:<reason>" (the board's arch cannot host it — resolve refuses by name).
+_RUNTIME_KINDS = ("supported", "deprecated", "unsupported")
+
 
 @dataclass
 class Source:
@@ -86,6 +93,7 @@ class Recipe:
     host: Host = field(default_factory=Host)
     graphs: List[Graph] = field(default_factory=list)
     precision_support: Dict[str, str] = field(default_factory=dict)  # {precision: status} — LLM, FR-L06
+    runtime_support: Dict[str, Dict[str, str]] = field(default_factory=dict)  # {runtime: {arch: status}} — FR-RT04
 
     @property
     def quant_tag(self) -> str:
@@ -100,6 +108,15 @@ class Recipe:
     def supported_precisions(self) -> List[str]:
         """The precisions this recipe declares runnable through the pipeline."""
         return [p for p, s in self.precision_support.items() if s == "supported"]
+
+    def runtime_status(self, runtime: str, arch: str) -> Optional[str]:
+        """The declared status for `runtime` on `arch` ('supported'/'deprecated:<s>'/'unsupported:<r>'), or None."""
+        return self.runtime_support.get(runtime, {}).get(arch)
+
+    def runnable_runtimes(self, arch: str) -> List[str]:
+        """The runtimes this recipe declares runnable on `arch` — 'supported' OR 'deprecated' (not 'unsupported')."""
+        return sorted(rt for rt, am in self.runtime_support.items()
+                      if str(am.get(arch, "")).split(":", 1)[0] in ("supported", "deprecated"))
 
     def adaptation(self, kind: str) -> Optional[Adaptation]:
         """The declared adaptation of a given kind, or None (e.g. recipe.adaptation('erf_to_tanh'))."""
@@ -153,6 +170,41 @@ def _parse_precision_support(items: Any) -> Dict[str, str]:
     return out
 
 
+def _parse_runtime_support(items: Any) -> Dict[str, Dict[str, str]]:
+    """Parse + validate `runtime_support:` — a nested map {runtime: {arch: status}}. Raises ValueError if malformed.
+
+    A near-clone of `_parse_precision_support`, one level deeper (runtime -> arch -> status) because a
+    runtime's support is per-arch. A status must be "supported" or "<deprecated|unsupported>:<tail>" with a
+    non-empty tail (the successor for `deprecated`, the reason for `unsupported`) — so a recipe cannot smuggle
+    in a vague "no": a limitation is named or it is not a valid recipe (the same strictness as the tag grammar).
+    """
+    if not items:
+        return {}
+    if not isinstance(items, dict):
+        raise ValueError(f"runtime_support must be a mapping {{runtime: {{arch: status}}}}, got {type(items).__name__}")
+    out: Dict[str, Dict[str, str]] = {}
+    for runtime, archmap in items.items():
+        if not isinstance(archmap, dict):
+            raise ValueError(
+                f"runtime_support[{runtime!r}] must be a mapping {{arch: status}}, got {type(archmap).__name__}")
+        per_arch: Dict[str, str] = {}
+        for arch, status in archmap.items():
+            status = str(status)
+            head = status.split(":", 1)[0]
+            if head not in _RUNTIME_KINDS:
+                raise ValueError(
+                    f"runtime_support[{runtime!r}][{arch!r}] = {status!r}: status must start with one of "
+                    f"{_RUNTIME_KINDS} (e.g. 'supported' or 'unsupported:htp-backend-excludes-v68')")
+            if head != "supported" and (":" not in status or not status.split(":", 1)[1].strip()):
+                raise ValueError(
+                    f"runtime_support[{runtime!r}][{arch!r}] = {status!r}: a {head!r} status must name a "
+                    f"reason/successor after the colon (e.g. 'deprecated:geniex-qairt' or "
+                    f"'unsupported:htp-backend-excludes-v68'); only 'supported' stands alone")
+            per_arch[str(arch)] = status
+        out[str(runtime)] = per_arch
+    return out
+
+
 def from_dict(doc: Dict[str, Any]) -> Recipe:
     """Build a Recipe from an already-parsed YAML mapping. Pure — no I/O. Raises ValueError if malformed."""
     if not isinstance(doc, dict):
@@ -195,7 +247,8 @@ def from_dict(doc: Dict[str, Any]) -> Recipe:
     return Recipe(name=str(doc["name"]), version=str(doc["version"]), route=route,
                   source=source, target=target, adaptations=_parse_adaptations(doc.get("adaptations")),
                   quant=quant, host=host, graphs=graphs,
-                  precision_support=_parse_precision_support(doc.get("precision_support")))
+                  precision_support=_parse_precision_support(doc.get("precision_support")),
+                  runtime_support=_parse_runtime_support(doc.get("runtime_support")))
 
 
 def load(path: str) -> Recipe:
