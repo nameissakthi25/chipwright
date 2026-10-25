@@ -53,7 +53,19 @@ SILICON_RECORD = {
         "ppl_stderr": 0.49427,
         "chunks": 16,
     },
-    # also proven on the earlier sweep: QCS8550 (soc_id 603, v73), PPL 11.6631, prefill 266.74 vs 152.93.
+    # The generative gate, driven BY chipwright on silicon (QCS8550 / kalama, soc_id 603, v73, 2026-10-25):
+    # llama-perplexity on HTP0 vs CPU (GGML_HEXAGON_NDEV=0) of the SAME Q8_0 GGUF. Identical weights, only
+    # the backend differs — they agree to the digit, isolating the backend (no chip bug).
+    "gate": {
+        "ppl_htp": 11.6631,
+        "ppl_cpu": 11.6631,
+        "backend_delta_pct": 0.0,      # |htp - cpu| / cpu — the gate (house rule <= 1.0%)
+        "ppl_f16_baseline": 11.6388,
+        "lossless_delta_pct": 0.209,   # recorded, not gated
+        "board": "QCS8550 / kalama (soc_id 603, v73)",
+        "date": "2026-10-25",
+    },
+    # dispatch also proven on QCS9075 (soc_id 676, v73): prefill 592.82 vs 217.55 = 2.72×.
 }
 
 # The glibc the container-built binaries need, staged next to the package (loader injection).
@@ -140,13 +152,15 @@ def dispatch_proof(stdout: str) -> DispatchProof:
 def host_preflight(probe: Dict) -> Tuple[bool, Optional[str]]:
     """Refuse-by-name if the board can't host the llama.cpp-HTP route. Pure: `probe` is a board capability dict.
 
-    Expected keys: `has_fastrpc` (bool), `has_cdsprpc` (bool), `htp_arch` (str, e.g. 'v73'),
-    `staged_htp_libs` (iterable of arch tags present, e.g. {'v73'}), `staged_loader_libs` (iterable of
-    loader lib filenames staged). Returns (ok, reason-if-not).
+    Expected keys: `has_cdsprpc` (bool — THE requirement: the fastrpc user driver llama.cpp loads),
+    `htp_arch` (str, e.g. 'v73'), `staged_htp_libs` (iterable of arch tags present, e.g. {'v73'}),
+    `staged_loader_libs` (iterable of loader lib filenames staged). `has_fastrpc` (the `/dev/fastrpc*`
+    device nodes) is informational only — proven on silicon that a board with libcdsprpc but no
+    `/dev/fastrpc*` nodes (QCS8550) still dispatches to HTP0, so it is NOT gated on. Returns (ok, reason).
     """
-    if not probe.get("has_fastrpc") or not probe.get("has_cdsprpc"):
-        return False, ("runtime=llamacpp-htp needs fastrpc + libcdsprpc on the board to reach the Hexagon "
-                       "DSP; this image has neither")
+    if not probe.get("has_cdsprpc"):
+        return False, ("runtime=llamacpp-htp needs libcdsprpc.so on the board to reach the Hexagon DSP "
+                       "(the fastrpc user driver llama.cpp loads); this image lacks it")
     arch = probe.get("htp_arch")
     staged = set(probe.get("staged_htp_libs") or ())
     if arch not in staged:

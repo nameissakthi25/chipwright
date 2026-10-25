@@ -21,7 +21,7 @@ import sys
 from . import cache, jsonout
 from .env import TargetKey, probe
 from .registry import Registry
-from .resolver import Outcome, resolve
+from .resolver import Decision, Outcome, resolve
 
 # ANSI palette. These are module globals so the whole file can keep printing with them; `_set_palette`
 # blanks them when colour is off (not a TTY / NO_COLOR / --json). The literals below are the coloured

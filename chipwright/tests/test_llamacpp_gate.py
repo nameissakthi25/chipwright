@@ -136,6 +136,17 @@ def test_replay_none_when_no_pinned_ppls():
     assert runner._llamacpp_replay(_variant()) is None
 
 
+def test_replay_through_the_cli_path(capsys):
+    """Drive cli._replay end to end (the integration path a unit test over _llamacpp_replay misses — it
+    caught a NameError: Decision wasn't imported in cli)."""
+    from chipwright.registry import Registry
+    reg = Registry(None)                              # the bundled public index (has the pinned gate)
+    code = cli._replay(reg, "qwen2.5-1.5b-instruct")
+    out = capsys.readouterr().out
+    assert code == 0 and "perplexity agreement" in out and "replay" in out
+    assert "Traceback" not in out and "NameError" not in out
+
+
 # --- render + json shape-safe -----------------------------------------------------------------------
 def test_gate_render_and_json(board_env, monkeypatch, capsys):
     monkeypatch.setattr("chipwright.device_llamacpp.LlamaHtpBoard",

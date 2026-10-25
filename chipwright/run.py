@@ -84,6 +84,8 @@ def _llamacpp_live_gate(variant, art, r):
     print("  pushing GGUF + proving dispatch on HTP0 …", flush=True)
     dev.ensure_gguf(art, name)
     proof = lh.dispatch_proof(dev.bench(name))
+    if not proof.dispatched:                              # the FIRST HTP session after idle can flake (error 0x14) — retry once
+        proof = lh.dispatch_proof(dev.bench(name))
     if not proof.dispatched:                              # a PPL measured while silently on CPU is not an HTP gate
         raise RuntimeError(f"{variant.model} [llamacpp-htp]: on-device dispatch not proven — {proof.reason}")
     chunks = int(r.get("chunks", 16))
