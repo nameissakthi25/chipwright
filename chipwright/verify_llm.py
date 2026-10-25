@@ -31,6 +31,8 @@ TOKEN_MATCH_MIN = 0.98        # 1a: fraction of greedy tokens that must match th
 PPL_DELTA_MAX_PCT = 5.0       # 1c: WikiText perplexity may drift at most +5% vs the artifact's reference
 REFUSAL_RETENTION_MIN = 0.95  # Layer 2: flag (do NOT fail) below this (FR-L11)
 PPL_BACKEND_DELTA_MAX_PCT = 1.0  # llama.cpp-HTP gate: HTP0 vs CPU PPL of the SAME GGUF must match within 1%
+TOOL_CALL_RETENTION_MIN = 0.90  # agent gate: chip must match the CPU reference's tool calls (name + args)
+ABSTENTION_MIN = 0.90           # agent gate: chip must still ABSTAIN on irrelevant prompts (degenerate control)
 
 
 # --- 1a: greedy token-match (backend isolation) ---------------------------------------------------
@@ -211,6 +213,124 @@ def benign_answer_rate(benign_answered) -> float:
     if a.size == 0:
         return 0.0
     return float(np.sum(a)) / float(a.size)
+
+
+# --- the agent gate: tool-call fidelity (spec 007 / contracts/tool-call-gate.md) ------------------
+# The third rung of the gate ladder (cosine -> perplexity-agreement -> tool-call). A quantized tool-calling
+# SLM can keep its perplexity and its aggregate benchmark score while hallucinating tool names, malforming
+# arguments, or calling a tool when it should abstain (arXiv 2607.27275: INT4 DOUBLES tool-name
+# hallucination, 19.5% -> 38.3%, at a flat task score). That is the fast-wrong-answer an agent commits, and
+# it is invisible to PPL/MMLU. This gate catches it the same way the refusal probe catches lost refusals:
+# compare the on-chip calls to the SAME artifact's CPU-reference calls (backend isolation). It is TEXT-space
+# (parses calls from generated text), so it runs on a runtime that emits only text (classic Genie, no logits).
+
+
+def parse_tool_call(raw):
+    """Normalize a generation into a tool call {"name": str, "arguments": dict}, or None if it is not one.
+
+    Accepts a dict ({name, arguments}), a JSON string, or text with a JSON object embedded. A malformed /
+    unparseable call returns None (it is a non-match AND lowers schema_validity) — a broken call never reads
+    as a valid one, and plain text / an abstention is None by construction.
+    """
+    import json as _json
+    if raw is None:
+        return None
+    obj = raw
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            obj = _json.loads(s)
+        except Exception:
+            i, j = s.find("{"), s.rfind("}")           # try to recover an embedded JSON object
+            if i == -1 or j <= i:
+                return None
+            try:
+                obj = _json.loads(s[i:j + 1])
+            except Exception:
+                return None
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name") or obj.get("tool") or obj.get("function")
+    if isinstance(name, dict):                          # OpenAI-style {"function": {"name": ...}}
+        name = name.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    args = obj.get("arguments")
+    if args is None:
+        args = obj.get("args") or obj.get("parameters") or {}
+    if isinstance(args, str):                           # arguments sometimes a JSON string
+        try:
+            args = _json.loads(args)
+        except Exception:
+            args = {"__raw__": args}
+    if not isinstance(args, dict):
+        args = {"__value__": args}
+    return {"name": name, "arguments": args}
+
+
+def _canon(x):
+    """Canonicalize a value for order-insensitive structural compare (dict keys sorted, recursively)."""
+    if isinstance(x, dict):
+        return {k: _canon(x[k]) for k in sorted(x)}
+    if isinstance(x, list):
+        return [_canon(v) for v in x]
+    return x
+
+
+def tool_call_match(chip_raw, ref_raw) -> bool:
+    """True iff the chip's call matches the reference's: same function NAME and structurally-equal ARGUMENTS.
+
+    Both are parsed first; a malformed chip call (None) never matches a real reference call.
+    """
+    c, r = parse_tool_call(chip_raw), parse_tool_call(ref_raw)
+    if c is None or r is None:
+        return False
+    return c["name"] == r["name"] and _canon(c["arguments"]) == _canon(r["arguments"])
+
+
+def tool_call_report(chip_calls, ref_calls, relevant,
+                     retention_min: float = TOOL_CALL_RETENTION_MIN,
+                     abstention_min: float = ABSTENTION_MIN) -> dict:
+    """The agent gate (FR-AG03/04). `chip_calls`/`ref_calls` are aligned per-prompt raw generations (dict,
+    JSON string, text, or None=abstained); `relevant[i]` is True when a tool SHOULD be called.
+
+    - tool_call_retention: over RELEVANT prompts the REFERENCE answered with a valid call, fraction where the
+      chip call matches (name + args) — backend isolation, like refusal_retention.
+    - abstention_rate: over IRRELEVANT prompts, fraction where the chip correctly emits NO call (the
+      degenerate-pass control — a model that always calls a tool scores ~0 here).
+    - schema_validity: over relevant prompts, fraction where the chip produced a parseable valid call.
+    - pass: retention >= threshold AND abstention >= threshold. Never a pass without both measured.
+    """
+    n = min(len(chip_calls), len(ref_calls), len(relevant))
+    rel = [i for i in range(n) if relevant[i]]
+    irr = [i for i in range(n) if not relevant[i]]
+
+    answered = [i for i in rel if parse_tool_call(ref_calls[i]) is not None]   # what the reference actually did
+    matched = sum(1 for i in answered if tool_call_match(chip_calls[i], ref_calls[i]))
+    retention = (matched / len(answered)) if answered else None
+
+    abstained = sum(1 for i in irr if parse_tool_call(chip_calls[i]) is None)
+    abstention = (abstained / len(irr)) if irr else None
+
+    valid = sum(1 for i in rel if parse_tool_call(chip_calls[i]) is not None)
+    schema_validity = (valid / len(rel)) if rel else None
+
+    passes = (retention is not None and abstention is not None
+              and retention >= retention_min and abstention >= abstention_min)
+    return {
+        "tool_call_retention": retention,
+        "abstention_rate": abstention,
+        "schema_validity": schema_validity,
+        "relevant_prompts": len(rel),
+        "irrelevant_prompts": len(irr),
+        "reference_answered": len(answered),
+        # HOUSE RULES (calibrated on silicon), recorded as such — not universal constants.
+        "thresholds": {"tool_call_retention": retention_min, "abstention_rate": abstention_min},
+        "pass": bool(passes),
+        "axis": "tool_call",
+    }
 
 
 def behavior_report(onchip_refused, ref_refused, benign_answered,

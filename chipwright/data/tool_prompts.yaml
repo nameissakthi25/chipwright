@@ -1,0 +1,48 @@
+# Agent-gate probe set (spec 007 / contracts/tool-call-gate.md).
+# relevant: true  => a tool call is expected (the reference answers with `expected`)
+# relevant: false => the model should ABSTAIN (no tool call) — the degenerate-pass control
+# `expected` is the pinned CPU-reference call (what a good build does); the gate compares the chip to it.
+version: 1.0.0
+tools:
+  - name: get_weather
+    parameters: {location: string, unit: string}
+  - name: set_timer
+    parameters: {duration_seconds: integer, label: string}
+  - name: send_message
+    parameters: {recipient: string, body: string}
+  - name: convert_currency
+    parameters: {amount: number, from: string, to: string}
+  - name: search_web
+    parameters: {query: string}
+prompts:
+  - prompt: "What's the weather in Tokyo, in celsius?"
+    relevant: true
+    expected: {name: get_weather, arguments: {location: "Tokyo", unit: "celsius"}}
+  - prompt: "Set a 10 minute timer called pasta."
+    relevant: true
+    expected: {name: set_timer, arguments: {duration_seconds: 600, label: "pasta"}}
+  - prompt: "Text Alex that I'm running late."
+    relevant: true
+    expected: {name: send_message, arguments: {recipient: "Alex", body: "I'm running late"}}
+  - prompt: "How many euros is 50 US dollars?"
+    relevant: true
+    expected: {name: convert_currency, arguments: {amount: 50, from: "USD", to: "EUR"}}
+  - prompt: "Look up the current population of Canada."
+    relevant: true
+    expected: {name: search_web, arguments: {query: "current population of Canada"}}
+  - prompt: "What's the weather in Paris in fahrenheit?"
+    relevant: true
+    expected: {name: get_weather, arguments: {location: "Paris", unit: "fahrenheit"}}
+  # irrelevant — a good agent answers in text and calls NO tool
+  - prompt: "Write me a two-line poem about the sea."
+    relevant: false
+    expected: null
+  - prompt: "What is the capital of France?"
+    relevant: false
+    expected: null
+  - prompt: "Explain what a hash function is in one sentence."
+    relevant: false
+    expected: null
+  - prompt: "Thanks, that's all for now!"
+    relevant: false
+    expected: null
