@@ -33,6 +33,8 @@ REFUSAL_RETENTION_MIN = 0.95  # Layer 2: flag (do NOT fail) below this (FR-L11)
 PPL_BACKEND_DELTA_MAX_PCT = 1.0  # llama.cpp-HTP gate: HTP0 vs CPU PPL of the SAME GGUF must match within 1%
 TOOL_CALL_RETENTION_MIN = 0.90  # agent gate: chip must match the CPU reference's tool calls (name + args)
 ABSTENTION_MIN = 0.90           # agent gate: chip must still ABSTAIN on irrelevant prompts (degenerate control)
+REF_ANSWERED_MIN = 3            # agent gate: below this many ref-answered relevant prompts, the reference is
+                               # DEGENERATE (unusable build) — retention can't isolate the backend (FR-AG09)
 
 
 # --- 1a: greedy token-match (backend isolation) ---------------------------------------------------
@@ -292,8 +294,9 @@ def tool_call_match(chip_raw, ref_raw) -> bool:
 
 def tool_call_report(chip_calls, ref_calls, relevant,
                      retention_min: float = TOOL_CALL_RETENTION_MIN,
-                     abstention_min: float = ABSTENTION_MIN) -> dict:
-    """The agent gate (FR-AG03/04). `chip_calls`/`ref_calls` are aligned per-prompt raw generations (dict,
+                     abstention_min: float = ABSTENTION_MIN,
+                     ref_answered_min: int = REF_ANSWERED_MIN) -> dict:
+    """The agent gate (FR-AG03/04/09). `chip_calls`/`ref_calls` are aligned per-prompt raw generations (dict,
     JSON string, text, or None=abstained); `relevant[i]` is True when a tool SHOULD be called.
 
     - tool_call_retention: over RELEVANT prompts the REFERENCE answered with a valid call, fraction where the
@@ -301,7 +304,11 @@ def tool_call_report(chip_calls, ref_calls, relevant,
     - abstention_rate: over IRRELEVANT prompts, fraction where the chip correctly emits NO call (the
       degenerate-pass control — a model that always calls a tool scores ~0 here).
     - schema_validity: over relevant prompts, fraction where the chip produced a parseable valid call.
-    - pass: retention >= threshold AND abstention >= threshold. Never a pass without both measured.
+    - reference_degenerate (FR-AG09): True when the reference answered fewer than `ref_answered_min` relevant
+      prompts — the denominator is then too small to isolate the backend, so the FAIL is attributed to the
+      reference (an unusable build, typically quant/format collapse), NOT to a chip divergence. It can't PASS.
+    - pass: retention >= threshold AND abstention >= threshold AND NOT reference_degenerate. Never a pass
+      without both measured.
     """
     n = min(len(chip_calls), len(ref_calls), len(relevant))
     rel = [i for i in range(n) if relevant[i]]
@@ -317,20 +324,34 @@ def tool_call_report(chip_calls, ref_calls, relevant,
     valid = sum(1 for i in rel if parse_tool_call(chip_calls[i]) is not None)
     schema_validity = (valid / len(rel)) if rel else None
 
-    passes = (retention is not None and abstention is not None
+    # FR-AG09: a degenerate reference — only meaningful when relevant prompts exist at all.
+    reference_degenerate = bool(rel) and len(answered) < ref_answered_min
+    degenerate_reason = (
+        f"reference_degenerate: the CPU reference answered only {len(answered)} of {len(rel)} relevant "
+        f"prompts (< {ref_answered_min}) — the build is unusable at the source (typically quant/format "
+        f"collapse); retention over so few prompts cannot isolate the backend, so this FAIL is attributed "
+        f"to the reference, not a chip divergence."
+    ) if reference_degenerate else None
+
+    passes = (retention is not None and abstention is not None and not reference_degenerate
               and retention >= retention_min and abstention >= abstention_min)
-    return {
+    report = {
         "tool_call_retention": retention,
         "abstention_rate": abstention,
         "schema_validity": schema_validity,
         "relevant_prompts": len(rel),
         "irrelevant_prompts": len(irr),
         "reference_answered": len(answered),
+        "reference_degenerate": reference_degenerate,
         # HOUSE RULES (calibrated on silicon), recorded as such — not universal constants.
-        "thresholds": {"tool_call_retention": retention_min, "abstention_rate": abstention_min},
+        "thresholds": {"tool_call_retention": retention_min, "abstention_rate": abstention_min,
+                       "reference_answered_min": ref_answered_min},
         "pass": bool(passes),
         "axis": "tool_call",
     }
+    if degenerate_reason:
+        report["reason"] = degenerate_reason
+    return report
 
 
 def behavior_report(onchip_refused, ref_refused, benign_answered,

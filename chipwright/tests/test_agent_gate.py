@@ -91,6 +91,27 @@ def test_retention_denominator_is_what_the_reference_answered():
     assert rep["reference_answered"] == 1 and rep["tool_call_retention"] == 1.0
 
 
+def test_degenerate_reference_cannot_pass_and_names_the_reason():
+    """FR-AG09 (surfaced on silicon by Q4_0, SC-AG05): when the reference answered too few relevant prompts,
+    the build is unusable at the source — retention over so few prompts can't isolate the backend, so the gate
+    FLAGS reference_degenerate, attributes the FAIL to the reference (not the chip), and can never PASS — even
+    when the chip perfectly matches what little the reference did answer."""
+    # 5 relevant prompts; the reference (e.g. a Q4_0 build with format collapse) answered only 1 of them.
+    ref = [{"name": "f", "arguments": {}}, None, None, None, None, None, None]
+    chip = [{"name": "f", "arguments": {}}, None, None, None, None, None, None]   # chip matches the 1, abstains rest
+    rel = [True, True, True, True, True, False, False]
+    rep = v.tool_call_report(chip, ref, rel)
+    assert rep["reference_answered"] == 1
+    assert rep["reference_degenerate"] is True
+    assert rep["tool_call_retention"] == 1.0            # perfect on the 1 it answered...
+    assert rep["abstention_rate"] == 1.0                # ...and abstention is clean...
+    assert rep["pass"] is False                         # ...but a degenerate reference can NEVER pass.
+    assert "reference_degenerate" in rep.get("reason", "")
+    # a healthy reference (>= floor answered) is NOT flagged and can pass
+    healthy = v.tool_call_report(list(_REF), _REF, _REL)
+    assert healthy["reference_degenerate"] is False and healthy["pass"] is True
+
+
 # --- the demo invariant ---------------------------------------------------------------------------
 def test_demo_good_passes_broken_fails():
     from chipwright.demos import agent_gate as m
