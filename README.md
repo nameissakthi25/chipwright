@@ -231,6 +231,36 @@ A high cosine is necessary, not sufficient — a cosine of 0.99 can still cost t
 
 ---
 
+## The gate ladder — and the agent gate
+
+A cosine proves the NPU didn't change a *tensor*. But a model can fail in ways a tensor check misses, so the gate ladder climbs with the model class:
+
+| tier | class | the check |
+| --- | --- | --- |
+| **cosine** | CV / ASR | per-output NPU-vs-CPU cosine on the same input |
+| **perplexity-agreement** | LLM | HTP0 vs the same GGUF's CPU perplexity (backend isolation) |
+| **tool-call fidelity** | **agents** | the NPU's tool calls vs the CPU reference's, over a fixed prompt set |
+
+The newest tier is the **agent gate**. A quantized tool-calling model can keep its perplexity and its benchmark score while **hallucinating tool names, malforming arguments, or calling a tool when it should abstain** — the one failure `PPL`/`MMLU` can't see (INT4 *doubles* tool-name hallucination at a flat score; `arXiv 2607.27275`). The gate runs the model's calls on the **NPU** and on the **CPU reference of the same quantized artifact**, scores `tool_call_retention` (name + args match) and `abstention_rate` (still quiet when no tool is needed), and **FAILs by name**. It reads calls from text, so it runs even on runtimes that emit no logits (classic Genie).
+
+It's on the front door — `chipwright gate`:
+
+```console
+$ chipwright gate qwen2.5-1.5b-instruct          # the pinned on-silicon record
+↺ agent gate — tool-call fidelity, HTP0 vs the SAME GGUF's CPU reference (recorded on QCS8550 / Hexagon v73, 2026-10-26)
+  qwen2.5-1.5b-instruct  ✔ VERIFIED
+    tool_call_retention = 1.00  (gate ≥ 0.9)   over 5 ref-answered prompts
+    abstention_rate     = 1.00  (gate ≥ 0.9)
+  the gate that cannot FAIL is not a gate — the SAME gate, SAME board, a lossy Q4_0 build:
+    ✗ FAIL  retention = 0.00, abstention = 1.00, reference_degenerate
+
+$ chipwright gate --demo                          # good build PASSES, quant-damaged build FAILS by name
+```
+
+Both numbers are measured on a real Qualcomm NPU (QCS8550 / Hexagon v73, Q8_0 vs Q4_0), not asserted. This is **backend-faithfulness** — "the chip didn't make your agent worse than its own CPU reference" — not an absolute safety claim; thresholds are house rules, calibrated on known-good vs known-bad on silicon.
+
+---
+
 ## Architecture
 
 One front door today, one core, three targets.

@@ -197,6 +197,34 @@ models:
           on_cdsp: true
           htp0_prefill_tps: 531.99         # QCS8550; also 592.82 on QCS9075 (2.72× vs CPU 217.55)
           note: Q8_0 MUL_MAT dispatched to HTP0 on the compute-DSP (_dom=cdsp), not CPU fallback (SC-RT03)
+        tool_call:
+          # the AGENT gate (spec 007): on-silicon tool-call fidelity — generated on HTP0 and on the SAME
+          # GGUF's CPU reference (GGML_HEXAGON_NDEV=0), greedy, over a fixed relevant/irrelevant prompt set,
+          # scored by verify_llm.tool_call_report. Tested-is-a-record: board + date + the measured numbers.
+          'on': QCS8550 / kalama (soc_id 603, Hexagon v73)
+          date: 2026-10-26
+          prompt_set: data/tool_prompts.yaml
+          thresholds: {tool_call_retention: 0.90, abstention_rate: 0.90}
+          pass: true
+          tool_call_retention: 1.0
+          abstention_rate: 1.0
+          schema_validity: 1.0
+          reference_answered: 5
+          note: Q8_0 backend-faithful — HTP0 tool calls match the CPU reference (SC-AG04)
+          known_bad:
+            # the gate that cannot FAIL is not a gate: the SAME gate on the SAME board FAILs a lossy Q4_0
+            # build — a real on-silicon regression, not a hand-injected one (SC-AG05).
+            quant: Q4_0
+            pass: false
+            tool_call_retention: 0.0
+            abstention_rate: 1.0
+            schema_validity: 0.17
+            reference_answered: 1
+            reference_degenerate: true
+            note: >-
+              Q4_0 output-format collapse — drops the <tool_call> wrapper on BOTH HTP and CPU (the 4-bit
+              floor); wrapper-agnostic semantic retention 0.75, plus one real HTP-vs-CPU divergence. The
+              degenerate reference (1 of 6 relevant answered) is why the FAIL is named on the reference.
         llamacpp_build: b3278e921
       note: the >4-bit integer route Genie lacks; generative gate = HTP0-vs-CPU perplexity agreement, driven by chipwright on silicon
 - model: qwen2.5-7b-instruct

@@ -326,6 +326,68 @@ def cmd_verify(args):
     return _replay(reg, args.model)
 
 
+def _render_gate(model, tc):
+    """Print a model's pinned ON-SILICON tool-call record (the agent gate, spec 007), labelled as a recorded
+    result — board + date + the numbers, never re-badged as a fresh run. Returns 0 on a recorded PASS."""
+    board, date = tc.get("on", "?"), tc.get("date", "?")
+    thr = tc.get("thresholds") or {}
+    mark = f"{GREEN}✔ VERIFIED{RST}" if tc.get("pass") else f"{RED}✗ FAIL  axis=tool_call{RST}"
+    print(f"\n{DIM}↺ agent gate — tool-call fidelity, HTP0 vs the SAME GGUF's CPU reference "
+          f"(recorded on {board}, {date}){RST}")
+    print(f"  {model}  {mark}")
+    print(f"    tool_call_retention = {tc.get('tool_call_retention'):.2f}  "
+          f"(gate ≥ {thr.get('tool_call_retention')})   over {tc.get('reference_answered')} ref-answered prompts")
+    print(f"    abstention_rate     = {tc.get('abstention_rate'):.2f}  (gate ≥ {thr.get('abstention_rate')})")
+    print(f"    schema_validity     = {tc.get('schema_validity'):.2f}  {DIM}(recorded, not gated){RST}")
+    if tc.get("note"):
+        print(f"    {DIM}{tc['note']}{RST}")
+    kb = tc.get("known_bad")
+    if kb:
+        kmark = f"{RED}✗ FAIL{RST}" if not kb.get("pass") else f"{GREEN}✔{RST}"
+        print(f"  {DIM}the gate that cannot FAIL is not a gate — the SAME gate, SAME board, "
+              f"a lossy {kb.get('quant')} build:{RST}")
+        extra = ", reference_degenerate" if kb.get("reference_degenerate") else ""
+        print(f"    {kmark}  retention = {kb.get('tool_call_retention'):.2f}, "
+              f"abstention = {kb.get('abstention_rate'):.2f}{extra}")
+        if kb.get("note"):
+            print(f"    {DIM}{kb['note']}{RST}")
+    print(f"  {DIM}backend-faithfulness vs the CPU reference, not an absolute safety claim; thresholds are "
+          f"house rules. Run it yourself: python -m chipwright.demos.agent_gate{RST}")
+    return 0 if tc.get("pass") else jsonout.EXIT_VERIFY_MISMATCH
+
+
+def cmd_gate(args):
+    """`chipwright gate` — the AGENT gate (tool-call fidelity, spec 007) on the front door: the gate ladder's
+    third tier (cosine → perplexity-agreement → tool-call). `--demo` runs the shipped good-vs-broken
+    demonstration; `gate <model>` surfaces the model's pinned on-silicon tool-call record."""
+    if getattr(args, "demo", False):
+        from chipwright.demos import agent_gate
+        agent_gate.main()
+        return 0
+    model = getattr(args, "model", None)
+    if not model:
+        print(f"{YELLOW}usage:{RST} chipwright gate <model>   (or  chipwright gate --demo)")
+        print(f"  {DIM}the agent gate proves a quantized tool-calling model still calls tools correctly on "
+              f"the NPU vs its CPU reference — and FAILs by name if the chip silently diverged.{RST}")
+        return 2
+    reg = Registry(args.registry)
+    if model not in reg.models():
+        print(f"{RED}unknown model{RST} '{model}'. known: {', '.join(reg.models())}")
+        return 2
+    tc = None
+    for v in reg.variants(model):
+        rec = ((v.verified or {}).get("vs_reference") or {}).get("tool_call")
+        if rec:
+            tc = rec
+            break
+    if not tc:
+        print(f"{RED}✗ no on-silicon tool-call record{RST} for '{model}'. The agent gate ships as a runnable "
+              f"demonstration meanwhile:  {DIM}python -m chipwright.demos.agent_gate{RST}  "
+              f"(or `chipwright gate --demo`).")
+        return 2
+    return _render_gate(model, tc)
+
+
 def _render_run_report(rep, d):
     """Print a run's verification report (human door) and return its exit code. Shape-safe: the LLM
     generative gate reports a `tripwire` (token-match), CV/ASR a cosine — the human door must not diverge
@@ -554,8 +616,12 @@ _EXIT_CODE_HELP = f"""exit codes (stable contract, chipwright.jsonout.__api__={j
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="chipwright", description="Chipwright — package manager for Qualcomm NPUs",
-                                 epilog=_EXIT_CODE_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog="chipwright",
+        description="Chipwright — a verified package manager for Qualcomm NPUs. The gate ladder proves "
+                    "correctness on the chip: cosine (CV/ASR) -> perplexity-agreement (LLM) -> tool-call "
+                    "fidelity (agents, `chipwright gate`).",
+        epilog=_EXIT_CODE_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--registry", default=None, help="index path/URL (default: bundled registry)")
     ap.add_argument("--host"); ap.add_argument("--user"); ap.add_argument("--pw"); ap.add_argument("--port")
     ap.add_argument("--target", help="offline target, e.g. 'htpv68,qnn2.37'")
@@ -580,10 +646,13 @@ def main(argv=None):
     vp.add_argument("model"); vp.add_argument("--offline", action="store_true",
                                               help="re-derive the recorded result from pinned tensors")
     bp = sub.add_parser("build", help="resolve; when it misses, build from a recipe"); bp.add_argument("model")
+    gp = sub.add_parser("gate", help="agent gate — on-silicon tool-call fidelity record, or --demo (spec 007)")
+    gp.add_argument("model", nargs="?")
+    gp.add_argument("--demo", action="store_true", help="run the shipped good-vs-broken demonstration")
     args = ap.parse_args(argv)
     _set_palette(_color_enabled(args.json))
     handler = {"doctor": cmd_doctor, "list": cmd_list, "resolve": cmd_resolve,
-               "run": cmd_run, "verify": cmd_verify, "build": cmd_build}[args.cmd]
+               "run": cmd_run, "verify": cmd_verify, "build": cmd_build, "gate": cmd_gate}[args.cmd]
     # In --json mode, an unexpected internal error must still leave exactly one JSON document on stdout
     # (never a half-line a parser chokes on) and exit 1 (FR-J01, edge case).
     if args.json and args.cmd in ("resolve", "run", "list"):

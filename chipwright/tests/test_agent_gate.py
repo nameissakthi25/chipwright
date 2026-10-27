@@ -119,3 +119,47 @@ def test_demo_good_passes_broken_fails():
     good = v.tool_call_report(m.good_chip(probes), [p["expected"] for p in probes], [p["relevant"] for p in probes])
     bad = v.tool_call_report(m.broken_chip(probes), [p["expected"] for p in probes], [p["relevant"] for p in probes])
     assert good["pass"] is True and bad["pass"] is False
+
+
+# --- the `gate` CLI verb (T-AG07: the gate on the front door) --------------------------------------
+import argparse  # noqa: E402
+from chipwright import cli  # noqa: E402
+
+
+def _gate_args(**kw):
+    return argparse.Namespace(**{"demo": False, "model": None, "registry": None, "json": False, **kw})
+
+
+def test_gate_surfaces_pinned_silicon_record(capsys):
+    """`chipwright gate <fc-model>` shows the pinned ON-SILICON tool-call record (SC-AG04 PASS) AND the
+    Q4_0 known-bad FAIL on the same board — the real on-device evidence, from the front door."""
+    cli._set_palette(False)
+    rc = cli.cmd_gate(_gate_args(model="qwen2.5-1.5b-instruct"))
+    out = capsys.readouterr().out
+    assert rc == 0                                   # recorded PASS
+    assert "VERIFIED" in out and "tool_call_retention = 1.00" in out
+    assert "QCS8550" in out and "2026-10-26" in out  # tested-is-a-record: board + date shown
+    assert "FAIL" in out and "Q4_0" in out           # the known-bad proves the gate can fail on silicon
+
+
+def test_gate_refuses_model_without_record_and_names_the_demo(capsys):
+    cli._set_palette(False)
+    rc = cli.cmd_gate(_gate_args(model="mobilenet-v2"))   # a CV model, no tool-call record
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "no on-silicon tool-call record" in out and "chipwright.demos.agent_gate" in out
+
+
+def test_gate_unknown_model_and_no_arg_refuse(capsys):
+    cli._set_palette(False)
+    assert cli.cmd_gate(_gate_args(model="nope")) == 2
+    assert "unknown model" in capsys.readouterr().out
+    assert cli.cmd_gate(_gate_args(model=None)) == 2           # usage
+    assert "gate <model>" in capsys.readouterr().out
+
+
+def test_gate_demo_runs(monkeypatch):
+    ran = {}
+    from chipwright.demos import agent_gate
+    monkeypatch.setattr(agent_gate, "main", lambda: ran.setdefault("ok", True))
+    assert cli.cmd_gate(_gate_args(demo=True)) == 0 and ran.get("ok")
