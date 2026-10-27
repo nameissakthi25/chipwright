@@ -79,3 +79,32 @@ def test_ext_bin_is_pushed_as_is_even_if_path_says_dlc(monkeypatch):
     dev = _dev(monkeypatch)
     dev.ensure_ctx("/x/weird.dlc", "m", ext="bin")
     assert not any("qnn-context-binary-generator" in c for c in calls)
+
+
+# --- _ssh resilience (added after a flaky QDC tunnel killed a long multi-call gate) ------------------
+# (reuses the module's _R(rc, out, err); returncode 255 alone triggers the connection-failure retry)
+def test_ssh_retries_on_connection_failure(monkeypatch):
+    """A CONNECTION failure (ssh 255 / connection-error text) is retried; the gate's many sequential board
+    calls survive a transient tunnel blip."""
+    seq = [_R(255, "Connection timed out during banner exchange"), _R(0, "", "ok")]
+    n = {"i": 0}
+    def fake_run(base, **k):
+        i = n["i"]; n["i"] += 1
+        return seq[min(i, len(seq) - 1)]
+    monkeypatch.setattr(device.subprocess, "run", fake_run)
+    monkeypatch.setattr(device.time, "sleep", lambda *a: None)
+    r = device._ssh("pw", 2222, "root@127.0.0.1", "echo hi")
+    assert r.returncode == 0 and n["i"] == 2          # retried once, then succeeded
+
+
+def test_ssh_does_not_retry_a_commands_nonzero_exit(monkeypatch):
+    """A remote command that RAN and returned non-zero (e.g. `test -e` on a missing file) must NOT be
+    retried — only connection failures are. Otherwise refuse-by-name checks would silently repeat."""
+    n = {"i": 0}
+    def fake_run(base, **k):
+        n["i"] += 1
+        return _R(1, "")                              # ran, returned 1 — a normal command result
+    monkeypatch.setattr(device.subprocess, "run", fake_run)
+    monkeypatch.setattr(device.time, "sleep", lambda *a: None)
+    r = device._ssh("pw", 2222, "root@127.0.0.1", "test -e /nope")
+    assert r.returncode == 1 and n["i"] == 1          # no retry

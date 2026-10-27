@@ -46,12 +46,42 @@ def _require_sshpass():
             "`apt-get install sshpass` (Debian/Ubuntu).")
 
 
-def _ssh(pw, port, dest, *cmd, timeout=600, capture=True):
+# Connection-failure signatures: a flaky board/tunnel (or a dropped QDC double-tunnel) manifests as ssh's
+# own exit 255 and/or one of these in stderr — distinct from a remote COMMAND that ran and returned non-zero.
+_SSH_CONN_ERR = ("connection timed out", "banner exchange", "connection refused", "connection reset",
+                 "lost connection", "connection closed", "broken pipe", "no route to host",
+                 "operation timed out", "timed out", "kex_exchange_identification")
+
+
+def _ssh(pw, port, dest, *cmd, timeout=600, capture=True, retries=3):
+    """Run one SSH command on the board. Resilient to a transient tunnel/board blip: keepalives hold a long
+    single call (e.g. a multi-minute perplexity run) open, and a CONNECTION failure (ssh exit 255 or a
+    connection-error signature — NOT a remote command's non-zero exit) is retried with backoff. A gate makes
+    many sequential board calls; one dropped connection must not fail the whole gate. Caught on a flaky QDC
+    double-tunnel; the same resilience matters for a real user's board over a shaky link."""
     base = ["sshpass", "-p", pw, "ssh", "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=20",
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4",
             "-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
             "-p", str(port), dest, *cmd]
-    return subprocess.run(base, capture_output=capture, text=True, timeout=timeout)
+    last = None
+    for attempt in range(max(1, retries)):
+        try:
+            r = subprocess.run(base, capture_output=capture, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            last = e
+            if attempt + 1 < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise
+        err = ((r.stderr or "") + (r.stdout or "")).lower() if capture else ""
+        conn_failed = r.returncode == 255 or any(s in err for s in _SSH_CONN_ERR)
+        if conn_failed and attempt + 1 < retries:
+            last = r
+            time.sleep(2 * (attempt + 1))
+            continue
+        return r
+    return last
 
 
 def _scp(pw, port, *args, timeout=1800):
