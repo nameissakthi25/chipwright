@@ -165,9 +165,9 @@ def test_live_gate_folds_agent_gate_into_overall_pass(monkeypatch):
         def __init__(self, *a, **k):
             self.pushed = []
         def probe(self):
-            return {}
+            return {"has_cdsprpc": True}          # the hard prereq the live gate checks before staging
         def ensure_pack(self, *a):
-            pass
+            self.staged = True
         def ensure_gguf(self, *a):
             return "/data/cw/qwen.gguf"
         def bench(self, *a, **k):
@@ -198,3 +198,59 @@ def test_live_gate_folds_agent_gate_into_overall_pass(monkeypatch):
     from chipwright.resolver import Decision
     doc = jsonout.run_to_dict("qwen2.5-1.5b-instruct", "v73", Decision(Outcome.USE), res)
     assert doc["tool_call"]["pass"] is False
+
+
+def test_live_gate_stages_pack_before_staged_lib_preflight(monkeypatch):
+    """Regression (caught on silicon, the live stranger-path run): on a FRESH board the pack must be staged
+    BEFORE host_preflight's staged-lib check, or the gate refuses ('libggml-htp-<arch>.so … staged: none')
+    before it ever stages. Assert ensure_pack runs before preflight."""
+    import chipwright.device_llamacpp as dl
+    from chipwright.runtimes import llamacpp_htp as lh
+    order = []
+
+    class _Board:
+        def __init__(self, *a, **k):
+            pass
+        def probe(self):
+            order.append("probe")
+            return {"has_cdsprpc": True}
+        def ensure_pack(self, *a):
+            order.append("ensure_pack")
+        def ensure_gguf(self, *a):
+            return "/data/cw/qwen.gguf"
+        def bench(self, *a, **k):
+            return "ok"
+        def perplexity(self, name, device="HTP0", ndev=None, chunks=16):
+            return (11.66, "out")
+
+    class _Proof:
+        dispatched = True
+        def as_record(self):
+            return {"reason": "ok", "dispatched": True}
+
+    monkeypatch.setattr(dl, "LlamaHtpBoard", _Board)
+    monkeypatch.setattr(lh, "host_preflight", lambda probe: (order.append("preflight"), (True, None))[1])
+    monkeypatch.setattr(lh, "dispatch_proof", lambda out: _Proof())
+    monkeypatch.setattr(runner, "_board_env", lambda: {"host": "h", "user": "root", "pw": "p", "port": 22})
+    res = runner._llamacpp_live_gate(_htp_variant("/x/qwen.gguf"), "/x/qwen.gguf",
+                                     {"pack_url": "u", "pack_sha": "s", "ppl_f16_baseline": 11.6388})
+    assert order.index("ensure_pack") < order.index("preflight")   # the fix: stage, THEN the staged-lib check
+    assert res["gate"]["pass"] is True
+
+
+def test_live_gate_refuses_early_when_no_cdsprpc(monkeypatch):
+    """The one hard prerequisite staging can't supply (the Hexagon RPC lib) is checked up front — a board
+    without it refuses by name, not after a wasted pack push."""
+    import pytest
+    import chipwright.device_llamacpp as dl
+
+    class _Board:
+        def __init__(self, *a, **k):
+            pass
+        def probe(self):
+            return {"has_cdsprpc": False}
+
+    monkeypatch.setattr(dl, "LlamaHtpBoard", _Board)
+    monkeypatch.setattr(runner, "_board_env", lambda: {"host": "h", "user": "root", "pw": "p", "port": 22})
+    with pytest.raises(RuntimeError, match="libcdsprpc"):
+        runner._llamacpp_live_gate(_htp_variant("/x/q.gguf"), "/x/q.gguf", {"pack_url": "u"})

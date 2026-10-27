@@ -113,12 +113,20 @@ def _llamacpp_live_gate(variant, art, r):
 
     b = _board_env()
     dev = LlamaHtpBoard(b["host"], b["user"], b["pw"], b["port"], board_dir=r.get("board_dir", "/data/cw"))
-    ok, why = lh.host_preflight(dev.probe())
-    if not ok:
-        raise RuntimeError(f"{variant.model} [llamacpp-htp]: {why}")
+    # Stage the runtime pack BEFORE the staged-lib preflight: on a FRESH board nothing is staged yet, so
+    # running host_preflight first would refuse ("libggml-htp-<arch>.so … staged: none") before ever staging.
+    # Check only the hard prerequisite staging can't supply (the Hexagon RPC lib) up front, then stage, then
+    # run the full preflight (which now sees the arch-matched HTP lib). Caught by the live stranger-path run.
+    probe = dev.probe()
+    if not probe.get("has_cdsprpc"):
+        raise RuntimeError(f"{variant.model} [llamacpp-htp]: needs libcdsprpc.so on the board to reach the "
+                           f"Hexagon DSP — not found. (Is this a Hexagon-capable board?)")
     if r.get("pack_url"):
         print("  staging runtime pack …", flush=True)
         dev.ensure_pack(r["pack_url"], r.get("pack_sha"))
+    ok, why = lh.host_preflight(dev.probe())             # now the arch-matched HTP lib is staged
+    if not ok:
+        raise RuntimeError(f"{variant.model} [llamacpp-htp]: {why}")
     name = os.path.basename(art)
     print("  pushing GGUF + proving dispatch on HTP0 …", flush=True)
     dev.ensure_gguf(art, name)
