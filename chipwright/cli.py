@@ -275,6 +275,19 @@ def _replay(reg, model):
     v = cand[0]
     try:
         res = rp.rederive(v)
+    except ImportError as e:
+        # The offline replay re-runs the CPU reference, which needs the modality's extra (onnxruntime, …).
+        # Mirror `doctor`: name the extra to install instead of dead-ending on a bare ModuleNotFoundError —
+        # this replay is the one place a skeptic re-derives the number cold, so it must not fail unhelpfully.
+        miss = getattr(e, "name", None) or str(e)
+        mod = (v.run or {}).get("modality")
+        extra = mod if mod in _MODALITY_EXTRAS else next(
+            (k for k, mods in _MODALITY_EXTRAS.items() if miss in mods), "cv")
+        print(f"{RED}✗ cannot replay{RST} {model}: the offline CPU-reference re-derivation needs "
+              f"`{miss}`, which the base install omits.")
+        print(f"  {DIM}pip install chipwright[{extra}]{RST}  — then re-run "
+              f"`chipwright verify {model} --offline`  (or run `chipwright doctor` to see every extra).")
+        return 1
     except Exception as e:
         print(f"{RED}✗ replay failed:{RST} {e}")
         return 1

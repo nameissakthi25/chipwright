@@ -177,6 +177,22 @@ def test_cli_replay_mismatch_refuses_exit1(monkeypatch, tmp_path, capsys):
     assert "REFUSING" in out and "not reproducible" in out
 
 
+def test_cli_replay_missing_extra_names_the_install(monkeypatch, capsys):
+    """A cold base install can't re-derive (no onnxruntime). The replay — the one place a skeptic re-derives
+    the number themselves — must name the extra to install, not dead-end on a bare ModuleNotFoundError."""
+    from chipwright import cli, replay as rp
+    def _boom(_v):
+        raise ModuleNotFoundError("No module named 'onnxruntime'")
+    monkeypatch.setattr(rp, "rederive", _boom)
+    v = _variant(run=_run_block(), verified=_record(1.0))   # re-derivable, so it reaches rederive()
+    rc = cli._replay(_Reg([v]), "synth-cv")
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "onnxruntime" in out
+    assert "pip install chipwright[cv]" in out               # cv modality -> the right extra
+    assert "replay failed" not in out                        # not the old unhelpful bare message
+
+
 if __name__ == "__main__":
     # These tests use pytest fixtures (monkeypatch / tmp_path / capsys), so run them under pytest.
     import pytest as _pytest
