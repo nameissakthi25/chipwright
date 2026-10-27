@@ -23,6 +23,8 @@ labels them as house rules, and the record states them as such.
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 # House rules — calibrated on known-good vs known-bad artifacts on real silicon (checkpoint C2), NOT
@@ -352,6 +354,47 @@ def tool_call_report(chip_calls, ref_calls, relevant,
     if degenerate_reason:
         report["reason"] = degenerate_reason
     return report
+
+
+# --- the live tool-call harness (T-AG07b): build the probe inputs, extract calls from a generation -------
+_SYS_FC = ("You are a function-calling assistant. You have access to these tools:\n<tools>\n{tools}\n</tools>"
+           "\nWhen a tool is needed, reply with ONLY a single line:\n"
+           "<tool_call>{{\"name\": \"<tool-name>\", \"arguments\": {{<args>}}}}</tool_call>\n"
+           "If no tool is appropriate, answer normally in plain text with no tool_call.")
+
+
+def build_tool_prompts(doc):
+    """Build the per-prompt generation inputs from a tool_prompts.yaml doc (the agent-gate probe set).
+
+    Returns (prompts, relevant): prompts[i] is the full chat-templated text to feed the model via `-f`,
+    relevant[i] is True when a tool is expected. Mirrors the Qwen2.5 tool-calling format — the SAME text is
+    sent to HTP0 and to the CPU reference, so only the backend differs. (Ported from the A100 build_prompts.py
+    into the package so `chipwright run <fc-model>` drives the gate without an external script.)"""
+    import json as _json
+    sysmsg = _SYS_FC.format(tools=_json.dumps(doc["tools"]))
+    prompts, relevant = [], []
+    for p in doc["prompts"]:
+        prompts.append(f"<|im_start|>system\n{sysmsg}<|im_end|>\n"
+                       f"<|im_start|>user\n{p['prompt']}<|im_end|>\n<|im_start|>assistant\n")
+        relevant.append(bool(p["relevant"]))
+    return prompts, relevant
+
+
+_TOOLCALL_RE = re.compile(r"<tool_call>(.*?)(?:</tool_call>|<\|im_end\|>|<\|endoftext\|>|$)", re.S)
+
+
+def extract_tool_call(text):
+    """Pull the FIRST parseable `<tool_call>{…}` payload from a generation (raw string, for tool_call_report).
+
+    Robust to the prompt's own `<tool_call>` format-template echoing back: its `{<args>}` placeholder does not
+    parse, so it is skipped. Returns None when no real call is present (an abstention)."""
+    if not text:
+        return None
+    for m in _TOOLCALL_RE.finditer(text):
+        payload = m.group(1).strip()
+        if payload and parse_tool_call(payload) is not None:
+            return payload
+    return None
 
 
 def behavior_report(onchip_refused, ref_refused, benign_answered,

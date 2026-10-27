@@ -171,6 +171,7 @@ models:
       ppl_f16_baseline: 11.6388
       pack_url: https://huggingface.co/nameissakthi/chipwright-llm/resolve/main/llamacpp-htp-pack-v73.tgz
       pack_sha: f40f7f9303fa649229d2766780a9cdc3f08feef4dfdb1b4e0de80bc7cca0e125
+      tool_prompts: data/tool_prompts.yaml   # fc-model: also drive the AGENT gate (tool-call fidelity, T-AG07b) on a board
     verified:
       'on': QCS8550 / kalama (soc_id 603, Hexagon v73)
       date: 2026-10-25

@@ -107,3 +107,38 @@ class LlamaHtpBoard:
         cmd = f"cd {shlex.quote(self.board_dir)} && {self._env(lib, ndev)} " + " ".join(shlex.quote(a) for a in argv)
         r = _ssh(self.pw, self.port, self.dest, cmd, timeout=timeout)
         return (r.stdout or "") + (r.stderr or "")
+
+    # --- the agent gate (T-AG07b): push a prompt + generate one guarded tool call --------------------
+    def push_text(self, text: str, name: str) -> str:
+        """Write a prompt text to a board file (scp from a host temp file) and return its board path."""
+        import tempfile
+        board_path = f"{self.board_dir}/{name}"
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(text)
+            local = f.name
+        try:
+            _ssh(self.pw, self.port, self.dest, f"mkdir -p {shlex.quote(self.board_dir)}", timeout=40)
+            r = _scp(self.pw, self.port, local, f"{self.dest}:{board_path}")
+            if getattr(r, "returncode", 1) != 0:
+                raise RuntimeError(f"failed to push prompt: {getattr(r, 'stderr', '')}")
+        finally:
+            os.unlink(local)
+        return board_path
+
+    def generate(self, gguf_name: str, prompt_board_path: str, device="HTP0", ndev=None,
+                 n_predict=200, ctx=4096, timeout=240):
+        """Run ONE guarded llama-cli generation (HTP0 or CPU) and return (tool_call_raw, stdout).
+
+        The guarded single-turn invocation does not wedge the board (proven on silicon). `ndev=0` => the CPU
+        reference of the SAME GGUF. The parsed `<tool_call>` payload (or None = abstained) is returned for
+        the gate; the full stdout is returned too for the record / debugging."""
+        from . import verify_llm
+        lib, loader, gguf, _ = self._paths(gguf_name)
+        argv = lh.generate_command(gguf, lib, loader, prompt_board_path, device=device, ndev=ndev,
+                                   n_predict=n_predict, ctx=ctx)
+        inner = max(30, int(timeout) - 10)                 # belt-and-braces: a hard timeout under the SSH one
+        cmd = (f"cd {shlex.quote(self.board_dir)} && {self._env(lib, ndev)} timeout {inner} "
+               + " ".join(shlex.quote(a) for a in argv))
+        r = _ssh(self.pw, self.port, self.dest, cmd, timeout=timeout)
+        out = (r.stdout or "") + (r.stderr or "")
+        return verify_llm.extract_tool_call(out), out

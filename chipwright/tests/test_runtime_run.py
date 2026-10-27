@@ -103,3 +103,98 @@ def test_json_projection_carries_runtime_record(tmp_path, monkeypatch):
     assert doc["runtime"] == "llamacpp-htp"
     assert doc["record"]["dispatch"]["prefill_speedup"] == 2.72
     assert any("board" in w for w in doc.get("warnings", []))
+
+
+# --- the live AGENT gate on the board (T-AG07b) -----------------------------------------------------
+class _FakeGenBoard:
+    """A fake board for the agent-gate driver: records pushed prompts, returns canned HTP/CPU calls per
+    prompt index (parsed from the tc_pN.txt filename). `generate` returns (call_or_None, stdout)."""
+    def __init__(self, htp, cpu):
+        import re
+        self._re = re
+        self.htp, self.cpu, self.pushed = htp, cpu, []
+
+    def push_text(self, text, name):
+        self.pushed.append(name)
+        return f"/data/cw/{name}"
+
+    def generate(self, gguf, pf, device="HTP0", ndev=None, n_predict=200, ctx=4096):
+        i = int(self._re.search(r"tc_p(\d+)", pf).group(1))
+        return (self.cpu[i] if ndev == 0 else self.htp[i]), "stdout"
+
+
+# 3 relevant (>= the REF_ANSWERED_MIN=3 degenerate-guard floor) + 1 irrelevant, so a clean backend-faithful
+# PASS is reachable and the degenerate-reference guard doesn't confound the backend check.
+_DOC3 = {"tools": [{"name": "get_weather", "parameters": {}}],
+         "prompts": [{"prompt": "weather?", "relevant": True},
+                     {"prompt": "timer", "relevant": True},
+                     {"prompt": "search", "relevant": True},
+                     {"prompt": "poem", "relevant": False}]}
+_REF4 = ['{"name":"get_weather","arguments":{"location":"Tokyo"}}',
+         '{"name":"set_timer","arguments":{"s":60}}',
+         '{"name":"search_web","arguments":{"q":"x"}}', None]
+
+
+def test_live_tool_call_gate_driver_scores_from_board(monkeypatch):
+    monkeypatch.setattr(runner, "_load_tool_prompts", lambda spec: _DOC3)
+    # backend-faithful: HTP == CPU -> PASS, and the prompt set was pushed in order
+    good = _FakeGenBoard(list(_REF4), _REF4)
+    rep = runner._llamacpp_tool_call_gate(good, "/x/qwen.gguf", {"tool_prompts": "data/tool_prompts.yaml"})
+    assert rep["pass"] is True and rep["tool_call_retention"] == 1.0 and rep["abstention_rate"] == 1.0
+    assert rep["reference_degenerate"] is False
+    assert good.pushed == ["tc_p0.txt", "tc_p1.txt", "tc_p2.txt", "tc_p3.txt"]
+    # a diverging chip (hallucinated name on p0, dropped call on p1) FAILs by the tool_call axis
+    bad = _FakeGenBoard(['{"name":"get_weather_v2","arguments":{"location":"Tokyo"}}', None,
+                         '{"name":"search_web","arguments":{"q":"x"}}', None], _REF4)
+    rep2 = runner._llamacpp_tool_call_gate(bad, "/x/qwen.gguf", {})
+    assert rep2["pass"] is False and rep2["tool_call_retention"] < 0.9 and rep2["axis"] == "tool_call"
+
+
+def test_live_gate_folds_agent_gate_into_overall_pass(monkeypatch):
+    """ppl agrees (chip faithful on tensors) but the agent gate catches a hallucinated tool name -> the
+    overall run FAILs. The agent gate rides the same staged board + proven dispatch as the ppl gate."""
+    import chipwright.device_llamacpp as dl
+    from chipwright.runtimes import llamacpp_htp as lh
+
+    class _Proof:
+        dispatched = True
+        def as_record(self):
+            return {"reason": "HTP0 ok", "dispatched": True}
+
+    class _Board:
+        def __init__(self, *a, **k):
+            self.pushed = []
+        def probe(self):
+            return {}
+        def ensure_pack(self, *a):
+            pass
+        def ensure_gguf(self, *a):
+            return "/data/cw/qwen.gguf"
+        def bench(self, *a, **k):
+            return "ok"
+        def perplexity(self, name, device="HTP0", ndev=None, chunks=16):
+            return (11.66, "out")                 # HTP == CPU -> ppl agreement PASSES
+        def push_text(self, text, name):
+            self.pushed.append(name)
+            return "/data/cw/" + name
+        def generate(self, gguf, pf, device="HTP0", ndev=None, n_predict=200, ctx=4096):
+            import re
+            i = int(re.search(r"tc_p(\d+)", pf).group(1))
+            # reference answers all 3 relevant (not degenerate); HTP hallucinates the name on p0 only
+            htp = ['{"name":"HALLUCINATED","arguments":{"location":"Tokyo"}}', _REF4[1], _REF4[2], None]
+            return (_REF4[i] if ndev == 0 else htp[i]), "out"
+
+    monkeypatch.setattr(dl, "LlamaHtpBoard", _Board)
+    monkeypatch.setattr(lh, "host_preflight", lambda probe: (True, None))
+    monkeypatch.setattr(lh, "dispatch_proof", lambda out: _Proof())
+    monkeypatch.setattr(runner, "_board_env", lambda: {"host": "h", "user": "root", "pw": "p", "port": 22})
+    monkeypatch.setattr(runner, "_load_tool_prompts", lambda spec: _DOC3)
+    res = runner._llamacpp_live_gate(_htp_variant("/x/qwen.gguf"), "/x/qwen.gguf",
+                                     {"tool_prompts": "data/tool_prompts.yaml", "ppl_f16_baseline": 11.6388})
+    assert res["gate"]["pass"] is True            # the tensor/ppl gate agrees
+    assert res["tool_call"]["pass"] is False       # the agent gate caught the hallucinated name
+    assert res["pass"] is False                    # overall FAILs — both gates must pass
+    # and the --json projection carries the agent-gate block
+    from chipwright.resolver import Decision
+    doc = jsonout.run_to_dict("qwen2.5-1.5b-instruct", "v73", Decision(Outcome.USE), res)
+    assert doc["tool_call"]["pass"] is False

@@ -163,3 +163,32 @@ def test_gate_demo_runs(monkeypatch):
     from chipwright.demos import agent_gate
     monkeypatch.setattr(agent_gate, "main", lambda: ran.setdefault("ok", True))
     assert cli.cmd_gate(_gate_args(demo=True)) == 0 and ran.get("ok")
+
+
+# --- the live harness (T-AG07b): build probe inputs + extract calls from a generation ---------------
+def test_build_tool_prompts_shape():
+    doc = {"tools": [{"name": "get_weather", "parameters": {}}],
+           "prompts": [{"prompt": "weather in Tokyo?", "relevant": True},
+                       {"prompt": "write a poem", "relevant": False}]}
+    prompts, relevant = v.build_tool_prompts(doc)
+    assert len(prompts) == 2 and relevant == [True, False]
+    assert "weather in Tokyo?" in prompts[0] and prompts[0].rstrip().endswith("<|im_start|>assistant")
+    assert "get_weather" in prompts[0]                     # the tools schema is in the system prompt
+
+
+def test_extract_tool_call_skips_the_prompt_template_and_abstains_on_prose():
+    # a realistic capture: the system prompt echoes the <tool_call> FORMAT TEMPLATE (with a {<args>}
+    # placeholder that does not parse), then the real generated call follows.
+    head = ('<|im_start|>system\nYou are a function-calling assistant.\n<tools>\n'
+            '[{"name": "get_weather", "parameters": {}}]\n</tools>\n'
+            'reply with: <tool_call>{"name": "<tool-name>", "arguments": {<args>}}</tool_call>\n'
+            '<|im_start|>user\nweather in Tokyo?<|im_end|>\n<|im_start|>assistant\n')
+    gen = head + '<tool_call>{"name": "get_weather", "arguments": {"location": "Tokyo"}}<|im_end|>'
+    raw = v.extract_tool_call(gen)
+    assert raw is not None
+    parsed = v.parse_tool_call(raw)
+    assert parsed["name"] == "get_weather" and parsed["arguments"]["location"] == "Tokyo"   # not "<tool-name>"
+    # a bare-JSON call (no <tool_call> wrapper) is NOT a strict match (a real runtime wouldn't parse it)
+    assert v.extract_tool_call(head + '{"name":"set_timer","arguments":{"s":60}}<|im_end|>') is None
+    # prose = abstain
+    assert v.extract_tool_call(head + "I'm running late, sorry.<|im_end|>") is None

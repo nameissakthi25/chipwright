@@ -211,6 +211,26 @@ def perplexity_command(gguf: str, lib_dir: str, loader_dir: str, corpus: str, *,
     return argv
 
 
+def generate_command(gguf: str, lib_dir: str, loader_dir: str, prompt_file: str, *,
+                     device: str = "HTP0", ndev: Optional[int] = None,
+                     n_predict: int = 200, ctx: int = 4096) -> List[str]:
+    """The loader-injected `llama-cli` argv for ONE guarded tool-call generation (the agent gate, T-AG07b).
+
+    The guard flags (`-no-cnv -st --temp 0 -s 0 --special --no-display-prompt`, greedy) are what make
+    llama-cli NOT wedge the board — the wedge was interactive/conversation mode, proven on silicon. `--device
+    HTP0` measures on the NPU; `ndev=0` (GGML_HEXAGON_NDEV=0 in the env) generates from the SAME GGUF on CPU,
+    so the two generations isolate the backend. The caller wraps this in `timeout` as a belt-and-braces guard.
+    """
+    bin_dir = lib_dir.rsplit("/lib", 1)[0] + "/bin"
+    argv = _loader_prefix(lib_dir, loader_dir) + [
+        f"{bin_dir}/llama-cli", "-m", gguf, "-f", prompt_file,
+        "-no-cnv", "-st", "--temp", "0", "-s", "0", "--special", "--no-display-prompt",
+        "-n", str(n_predict), "-c", str(ctx)]
+    if ndev != 0:
+        argv += ["--device", device, "-ngl", "99"]
+    return argv
+
+
 _PPL_RE = re.compile(r"Final estimate:\s*PPL\s*=\s*([0-9]+\.[0-9]+)")
 
 

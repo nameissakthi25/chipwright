@@ -61,13 +61,52 @@ def _llamacpp_artifact(variant):
     return art
 
 
+def _load_tool_prompts(spec):
+    """Load the agent-gate probe set (T-AG07b). `spec` is a run-block value: an explicit package-relative or
+    absolute path, else the bundled `data/tool_prompts.yaml`. Returns the parsed doc."""
+    import yaml
+    pkg = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(pkg, "data", "tool_prompts.yaml")
+    if isinstance(spec, str) and spec.strip() and spec not in ("data/tool_prompts.yaml",
+                                                               "tool_prompts.yaml", "true", "True"):
+        cand = spec if os.path.isabs(spec) else os.path.join(pkg, spec)
+        if os.path.exists(cand):
+            path = cand
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+def _llamacpp_tool_call_gate(dev, art, r, *, n_predict=200, ctx=4096):
+    """The AGENT gate on the board (T-AG07b): generate the tool-call probe set on HTP0 and on the SAME GGUF's
+    CPU reference (GGML_HEXAGON_NDEV=0), then score with `tool_call_report`. Backend isolation — identical
+    weights, only the compute device differs, so a divergence is a chip bug. Reuses the already-staged
+    pack+GGUF and the proven dispatch from the ppl gate (same `dev`). Guarded single-turn llama-cli (does
+    not wedge the board)."""
+    from . import verify_llm
+    doc = _load_tool_prompts(r.get("tool_prompts"))
+    prompts, relevant = verify_llm.build_tool_prompts(doc)
+    name = os.path.basename(art)
+    chip, ref = [], []
+    for i, text in enumerate(prompts):
+        pf = dev.push_text(text, f"tc_p{i}.txt")
+        c, _ = dev.generate(name, pf, device="HTP0", n_predict=n_predict, ctx=ctx)   # the chip under test
+        g, _ = dev.generate(name, pf, ndev=0, n_predict=n_predict, ctx=ctx)           # CPU ref, SAME GGUF
+        chip.append(c)
+        ref.append(g)
+    report = verify_llm.tool_call_report(chip, ref, relevant)
+    report["prompt_set"] = r.get("tool_prompts") if isinstance(r.get("tool_prompts"), str) \
+        else "data/tool_prompts.yaml"
+    return report
+
+
 def _llamacpp_live_gate(variant, art, r):
     """Drive the generative gate on the board (spec 004 T-RT11 + contracts/llamacpp-htp-gate.md).
 
     preflight (refuse by name) -> stage pack + GGUF -> prove dispatch (llama-bench HTP0) -> measure
     perplexity on HTP0 and on CPU (GGML_HEXAGON_NDEV=0) of the SAME GGUF -> ppl-agreement gate. The two
     perplexities isolate the backend: identical weights, only the compute device differs, so a divergence
-    is a chip bug. `llama-cli` is never run (it wedges the board)."""
+    is a chip bug. When the variant declares `run.tool_prompts`, the AGENT gate (tool-call fidelity, T-AG07b)
+    also runs on the same board, reusing the staged artifact + proven dispatch; overall pass needs both."""
     from . import verify_llm
     from .device_llamacpp import LlamaHtpBoard
     from .runtimes import llamacpp_htp as lh
@@ -93,8 +132,14 @@ def _llamacpp_live_gate(variant, art, r):
     ppl_htp, _ = dev.perplexity(name, device="HTP0", chunks=chunks)
     ppl_cpu, _ = dev.perplexity(name, ndev=0, chunks=chunks)
     gate = verify_llm.ppl_agreement_gate(ppl_htp, ppl_cpu, r.get("ppl_f16_baseline"))
-    return {"runtime": "llamacpp-htp", "gate": gate, "dispatch": proof.as_record(),
-            "pass": bool(gate["pass"] and proof.dispatched), "live": True, "artifact": art}
+    result = {"runtime": "llamacpp-htp", "gate": gate, "dispatch": proof.as_record(),
+              "pass": bool(gate["pass"] and proof.dispatched), "live": True, "artifact": art}
+    if r.get("tool_prompts"):                             # the agent gate (T-AG07b), on the same staged board
+        print("  running the agent gate (tool-call fidelity) on HTP0 vs CPU …", flush=True)
+        tc = _llamacpp_tool_call_gate(dev, art, r)
+        result["tool_call"] = tc
+        result["pass"] = bool(result["pass"] and tc["pass"])
+    return result
 
 
 def _llamacpp_replay(variant):

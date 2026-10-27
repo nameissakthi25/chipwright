@@ -106,6 +106,8 @@ def run_to_dict(model: str, target, d: Decision, report: dict) -> dict:
             rec["gate"] = report["gate"]
             rec["dispatch"] = report.get("dispatch")
             rec["mode"] = "live" if report.get("live") else ("replay" if report.get("replay") else None)
+            if report.get("tool_call") is not None:    # the agent gate also ran on the board (T-AG07b)
+                rec["tool_call"] = report["tool_call"]
         else:                                      # no board: surfaced the record + recipe
             rec["record"] = report.get("record")
             rec["recipe"] = report.get("recipe")

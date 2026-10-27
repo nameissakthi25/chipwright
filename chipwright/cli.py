@@ -404,6 +404,19 @@ def _render_run_report(rep, d):
             print(f"    quant cost vs f16: {g.get('lossless_delta_pct'):+.3f}%  (recorded, not gated)")
         if rep.get("dispatch"):
             print(f"    dispatch: {rep['dispatch'].get('reason')}")
+        tc = rep.get("tool_call")                         # the agent gate ran on the same board (T-AG07b)
+        if tc:
+            tcmark = f"{GREEN}✔{RST}" if tc.get("pass") else f"{RED}✗ FAIL  axis=tool_call{RST}"
+            tthr = tc.get("thresholds") or {}
+            print(f"  {tcmark}  agent gate — tool-call fidelity, HTP0 vs CPU (live)")
+            ret = tc.get("tool_call_retention")
+            print(f"    tool_call_retention = {ret:.2f}  (gate ≥ {tthr.get('tool_call_retention')})   "
+                  f"over {tc.get('reference_answered')} ref-answered prompts"
+                  if ret is not None else "    tool_call_retention = n/a (no reference calls)")
+            print(f"    abstention_rate     = {tc.get('abstention_rate'):.2f}  "
+                  f"(gate ≥ {tthr.get('abstention_rate')})")
+            if tc.get("reference_degenerate"):
+                print(f"    {DIM}{tc.get('reason', 'reference_degenerate')}{RST}")
         return jsonout.exit_code_for(d) if rep["pass"] else jsonout.EXIT_VERIFY_MISMATCH
     if rep.get("runtime") == "llamacpp-htp":     # no board: surface the record + the host recipe (FR-RT07)
         rec = rep.get("record") or {}
